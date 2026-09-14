@@ -1,6 +1,11 @@
 import { supabase, supabaseUrl, supabaseAnonKey } from '../supabase.js'
 
-const VAPID_PUBLIC_KEY = String(import.meta.env.VITE_VAPID_PUBLIC_KEY || '').trim()
+// Clé publique VAPID (volontairement côté client, comme BetterMe).
+// L'env VITE_VAPID_PUBLIC_KEY reste prioritaire si elle est définie au build.
+const VAPID_PUBLIC_KEY = String(
+  import.meta.env.VITE_VAPID_PUBLIC_KEY ||
+    'BEWdUGS7Kma5O89omPhVbZ_DlEVeoyI4__Xt2nc6JOCo8K-H7apEDw8j5B_i_uZOeATy_b-xXQbrkpCjl5iwPtk',
+).trim()
 const EDGE_FUNCTION_URL = `${supabaseUrl}/functions/v1/send-notification`
 const DEVICE_LABELS_KEY = 'gamecenter.deviceLabels'
 

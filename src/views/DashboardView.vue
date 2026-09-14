@@ -17,9 +17,6 @@ function gameCardStyle(game) {
       <div class="section-heading">
         <p class="eyebrow">Ludothèque</p>
         <h2 id="games-title">Tous les jeux</h2>
-        <p class="lede">
-          Chaque jeu aura sa propre charte graphique. La liste se remplira au fur et à mesure.
-        </p>
       </div>
 
       <div v-if="games.length" class="games-grid">

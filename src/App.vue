@@ -13,7 +13,6 @@ function onDeviceLinked() {
     <header class="app-header">
       <div class="app-header__inner">
         <div class="brand">
-          <p class="brand-kicker">Maison de jeux</p>
           <h1>Game Center</h1>
         </div>
         <NotificationsMenu />
@@ -51,26 +50,17 @@ function onDeviceLinked() {
 }
 
 .brand {
-  min-width: 0;
-}
-
-.brand-kicker {
-  margin: 0 0 0.15rem;
-  font-size: 0.72rem;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: color-mix(in srgb, var(--taupe) 70%, var(--cream));
-  font-weight: 700;
+  flex: 1 1 auto;
+  min-width: min-content;
 }
 
 h1 {
   margin: 0;
   font-family: var(--display);
-  font-size: clamp(1.45rem, 5vw, 2.5rem);
+  font-size: clamp(1.7rem, 4.5vw, 2.5rem);
   font-weight: 600;
-  letter-spacing: -0.03em;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
   white-space: nowrap;
 }
 
@@ -83,9 +73,8 @@ h1 {
 }
 
 @media (max-width: 720px) {
-  .brand-kicker {
-    font-size: 0.64rem;
-    letter-spacing: 0.14em;
+  h1 {
+    font-size: 1.7rem;
   }
 }
 </style>
