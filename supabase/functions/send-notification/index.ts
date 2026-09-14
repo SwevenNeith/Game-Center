@@ -18,6 +18,13 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS'
 }
 
+function jsonResponse(payload: unknown, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+  })
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -27,38 +34,46 @@ Deno.serve(async (req) => {
     const body = await req.json()
     console.log('Body reçu :', JSON.stringify(body))
 
-    const { type, title, body: msgBody, scheduledAt } = body
+    const { type, title, body: msgBody, scheduledAt, subscriptionIds } = body
 
     const { data: subscriptions, error } = await supabase
       .from('push_subscriptions')
-      .select('subscription')
+      .select('id, subscription')
 
     if (error) {
       console.error('Erreur récupération subscriptions :', error)
-      return new Response(JSON.stringify({ error: error.message }), {
-        status: 500,
-        headers: corsHeaders
-      })
+      return jsonResponse({ error: error.message }, 500)
     }
 
-    console.log('Subscriptions trouvées :', subscriptions?.length ?? 0)
+    const requestedIds = Array.isArray(subscriptionIds)
+      ? subscriptionIds.map((id) => String(id))
+      : []
+
+    const targets = (subscriptions ?? []).filter((row) => {
+      if (!requestedIds.length) return true
+      return requestedIds.includes(String(row.id))
+    })
+
+    console.log('Subscriptions trouvées :', targets.length)
+
+    let sent = 0
+    let failed = 0
 
     if (type === 'manuel') {
-      // Envoie immédiatement
-      for (const row of subscriptions) {
+      for (const row of targets) {
         try {
           await webpush.sendNotification(
             row.subscription,
             JSON.stringify({ title, body: msgBody })
           )
+          sent += 1
           console.log('Notification envoyée avec succès')
         } catch (e) {
+          failed += 1
           console.error('Erreur envoi notification :', e)
         }
       }
-
     } else if (type === 'planifie') {
-      // Stocke pour envoi différé par le cron
       const { error: insertError } = await supabase
         .from('scheduled_notifications')
         .insert({ title, body: msgBody, scheduled_at: scheduledAt })
@@ -68,9 +83,7 @@ Deno.serve(async (req) => {
       } else {
         console.log('Notification planifiée à :', scheduledAt)
       }
-
     } else if (type === 'cron') {
-      // Vérifie les notifications à envoyer
       const maintenant = new Date().toISOString()
       console.log('Cron exécuté à :', maintenant)
 
@@ -87,19 +100,20 @@ Deno.serve(async (req) => {
       }
 
       for (const notif of notificationsAEnvoyer ?? []) {
-        for (const row of subscriptions) {
+        for (const row of targets) {
           try {
             await webpush.sendNotification(
               row.subscription,
               JSON.stringify({ title: notif.title, body: notif.body })
             )
+            sent += 1
             console.log('Notification planifiée envoyée :', notif.id)
           } catch (e) {
+            failed += 1
             console.error('Erreur envoi notification planifiée :', e)
           }
         }
 
-        // Marque comme envoyée
         await supabase
           .from('scheduled_notifications')
           .update({ sent: true })
@@ -107,16 +121,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ success: true }), {
-      status: 200,
-      headers: corsHeaders
-    })
-
+    return jsonResponse({ success: true, sent, failed })
   } catch (e) {
     console.error('Erreur globale :', e)
-    return new Response(JSON.stringify({ error: String(e) }), {
-      status: 500,
-      headers: corsHeaders
-    })
+    return jsonResponse({ error: String(e) }, 500)
   }
 })
