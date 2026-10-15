@@ -7,7 +7,7 @@ import {
   vapidPublicKeyDisponible,
   detectDeviceName,
   notificationsIosNecessitentInstallation,
-  cetAppareilEstLie,
+  synchroniserNotificationsAccordees,
 } from '../services/notifications.js'
 
 const emit = defineEmits(['linked'])
@@ -37,27 +37,26 @@ async function refreshEtat() {
     return
   }
 
+  const etat = await obtenirEtatNotifications()
+
+  if (etat.permission === 'granted') {
+    visible.value = false
+    denied.value = false
+    linked.value = false
+    synchroniserNotificationsAccordees().then((result) => {
+      if (result.success) emit('linked')
+    })
+    return
+  }
+
   if (!vapidPublicKeyDisponible()) {
     visible.value = true
     errorMessage.value =
       'La clé publique VAPID est manquante. Ajoute VITE_VAPID_PUBLIC_KEY dans le fichier .env (la même que le secret Supabase).'
   }
 
-  const etat = await obtenirEtatNotifications()
-
   if (etat.showDeniedHelp) {
     denied.value = true
-    visible.value = true
-    return
-  }
-
-  if (etat.permission === 'granted') {
-    const alreadyLinked = await cetAppareilEstLie()
-    if (alreadyLinked) {
-      visible.value = false
-      emit('linked')
-      return
-    }
     visible.value = true
     return
   }
@@ -86,9 +85,7 @@ function messagePourErreur(result) {
 }
 
 function showRelinkForm() {
-  linked.value = false
-  denied.value = false
-  visible.value = true
+  refreshEtat()
 }
 
 onMounted(() => {
@@ -118,8 +115,8 @@ async function onAutoriser() {
     const result = await activerNotificationsUtilisateur(deviceName.value, permission)
 
     if (result.success) {
-      linked.value = true
-      visible.value = true
+      linked.value = false
+      visible.value = false
       emit('linked')
       return
     }

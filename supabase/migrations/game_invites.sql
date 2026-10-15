@@ -13,7 +13,10 @@ create table if not exists public.game_invites (
   guest_device_id text,
   created_at timestamptz not null default now(),
   expires_at timestamptz not null,
-  joined_at timestamptz
+  joined_at timestamptz,
+  game_state jsonb,
+  host_pick integer,
+  guest_pick integer
 );
 
 create index if not exists game_invites_code_idx on public.game_invites (code);

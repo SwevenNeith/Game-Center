@@ -1,5 +1,6 @@
 import { supabase } from '../supabase.js'
 import { getDeviceId, getLocalDeviceName } from './device.js'
+import { GAME_DURATION_MS, parseGameState } from './starterAveugle.js'
 
 export const INVITE_TTL_MS = 5 * 60 * 1000
 export const STARTER_GAME_ID = 'starter-aveugle'
@@ -26,6 +27,9 @@ function mapInviteError(error) {
   ) {
     return 'Table des invitations absente. Lance le script SQL game_invites dans Supabase.'
   }
+  if (/game_state|host_pick|guest_pick|PGRST204/i.test(message) || error?.code === 'PGRST204') {
+    return 'Colonnes de partie absentes. Lance le script SQL game_invites_starters dans Supabase.'
+  }
   return message
 }
 
@@ -36,9 +40,19 @@ export function isInviteExpired(invite) {
 
 export function otherPlayerName(invite, deviceId = getDeviceId()) {
   if (!invite) return null
-  if (invite.host_device_id === deviceId) return invite.guest_name || null
-  if (invite.guest_device_id === deviceId) return invite.host_name || null
-  return invite.guest_name || invite.host_name || null
+  const state = parseGameState(invite)
+  if (invite.host_device_id === deviceId) return state.guest.playerName || null
+  if (invite.guest_device_id === deviceId) return state.host.playerName || null
+  return state.guest.playerName || state.host.playerName || null
+}
+
+export function localPlayerName(invite, deviceId = getDeviceId()) {
+  if (!invite) return null
+  const state = parseGameState(invite)
+  const role = localPlayerRole(invite, deviceId)
+  if (role === 'host') return state.host.playerName || null
+  if (role === 'guest') return state.guest.playerName || null
+  return null
 }
 
 export function localPlayerRole(invite, deviceId = getDeviceId()) {
@@ -48,7 +62,7 @@ export function localPlayerRole(invite, deviceId = getDeviceId()) {
   return null
 }
 
-export async function createInvite(gameId = STARTER_GAME_ID) {
+export async function createInvite(gameId = STARTER_GAME_ID, extra = {}) {
   const hostName = getLocalDeviceName()
   const hostDeviceId = getDeviceId()
   const expiresAt = new Date(Date.now() + INVITE_TTL_MS).toISOString()
@@ -63,6 +77,7 @@ export async function createInvite(gameId = STARTER_GAME_ID) {
         host_name: hostName,
         host_device_id: hostDeviceId,
         expires_at: expiresAt,
+        ...extra,
       })
       .select('*')
       .single()
@@ -119,6 +134,8 @@ export async function joinInvite(rawCode, expectedGameId = null) {
       guest_name: name,
       guest_device_id: deviceId,
       joined_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + GAME_DURATION_MS).toISOString(),
+      game_state: parseGameState(invite),
     })
     .eq('id', invite.id)
     .is('guest_device_id', null)
@@ -128,6 +145,19 @@ export async function joinInvite(rawCode, expectedGameId = null) {
 
   if (error) return { success: false, message: mapInviteError(error) }
   if (!data) return { success: false, message: 'Code déjà utilisé ou expiré.' }
+  return { success: true, invite: data }
+}
+
+export async function updateInvite(id, fields) {
+  const { data, error } = await supabase
+    .from('game_invites')
+    .update(fields)
+    .eq('id', id)
+    .select('*')
+    .maybeSingle()
+
+  if (error) return { success: false, message: mapInviteError(error) }
+  if (!data) return { success: false, message: 'Invitation introuvable.' }
   return { success: true, invite: data }
 }
 

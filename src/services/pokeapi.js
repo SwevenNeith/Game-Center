@@ -678,3 +678,38 @@ export async function fillFrenchNames() {
     // quota
   }
 }
+
+const EXCLUDED_FORM = /-(mega|gmax|gigantamax|primal)(-|$)/i
+
+export function isExcludedStarterForm(slug) {
+  return EXCLUDED_FORM.test(String(slug || ''))
+}
+
+export function eligibleStarterSpecies(index = memory.index || []) {
+  return index.filter((item) => item?.id && !isExcludedStarterForm(item.slug))
+}
+
+export function pickRandomStarters(index, count = 3, excludeIds = []) {
+  const exclude = new Set((excludeIds || []).map(Number).filter(Boolean))
+  const pool = eligibleStarterSpecies(index).filter((item) => !exclude.has(item.id))
+  const copy = [...pool]
+  const picks = []
+
+  while (picks.length < count && copy.length) {
+    const random = crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32
+    const at = Math.floor(random * copy.length)
+    picks.push(copy.splice(at, 1)[0])
+  }
+
+  return picks
+}
+
+export function starterArtworkUrl(id) {
+  return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${id}.png`
+}
+
+export function resolveStartersByIds(index, ids = []) {
+  return (ids || [])
+    .map((id) => eligibleStarterSpecies(index).find((item) => item.id === Number(id)))
+    .filter(Boolean)
+}

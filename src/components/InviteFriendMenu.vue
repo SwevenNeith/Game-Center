@@ -5,6 +5,7 @@ import { createInvite, isInviteExpired, otherPlayerName, watchInvite } from '../
 const props = defineProps({
   invite: { type: Object, default: null },
   gameId: { type: String, required: true },
+  extra: { type: Object, default: () => ({}) },
 })
 
 const emit = defineEmits(['invite-created', 'invite-updated'])
@@ -44,10 +45,10 @@ function onDocumentPointer(event) {
 async function onInvite() {
   open.value = true
   errorMessage.value = ''
-  if (current.value && !expired.value && !friendName.value) return
+  if (current.value && !expired.value) return
 
   loading.value = true
-  const result = await createInvite(props.gameId)
+  const result = await createInvite(props.gameId, props.extra)
   loading.value = false
 
   if (!result.success) {
