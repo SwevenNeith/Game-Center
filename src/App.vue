@@ -1,5 +1,5 @@
 <script setup>
-import { RouterView } from 'vue-router'
+import { RouterLink, RouterView } from 'vue-router'
 import NotificationPrompt from './components/NotificationPrompt.vue'
 import NotificationsMenu from './components/NotificationsMenu.vue'
 
@@ -12,9 +12,9 @@ function onDeviceLinked() {
   <div class="app-shell">
     <header class="app-header">
       <div class="app-header__inner">
-        <div class="brand">
+        <RouterLink class="brand" to="/" aria-label="Game Center, accueil">
           <h1>Game Center</h1>
-        </div>
+        </RouterLink>
         <NotificationsMenu />
       </div>
     </header>
@@ -52,6 +52,8 @@ function onDeviceLinked() {
 .brand {
   flex: 1 1 auto;
   min-width: min-content;
+  text-decoration: none;
+  color: inherit;
 }
 
 h1 {

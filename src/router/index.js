@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import DashboardView from '../views/DashboardView.vue'
+import StarterAveugleView from '../views/StarterAveugleView.vue'
 
 const APP_NAME = 'Game Center'
 
@@ -11,6 +12,12 @@ const router = createRouter({
       name: 'dashboard',
       component: DashboardView,
       meta: { title: 'Dashboard' },
+    },
+    {
+      path: '/starter-aveugle',
+      name: 'starter-aveugle',
+      component: StarterAveugleView,
+      meta: { title: 'Starter à l’aveugle' },
     },
     {
       path: '/:pathMatch(.*)*',
