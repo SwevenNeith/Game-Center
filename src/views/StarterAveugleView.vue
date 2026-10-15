@@ -103,6 +103,8 @@ const waitingForFriend = computed(
 const waitingForFriendName = computed(
   () => Boolean(invite.value && guestJoined.value && !friendName.value),
 )
+const gameOver = computed(() => gameState.value.status === 'done')
+const myPick = computed(() => {
   if (!invite.value || !myRole.value) return null
   return myRole.value === 'host' ? invite.value.host_pick : invite.value.guest_pick
 })
@@ -123,8 +125,6 @@ const theirTeam = computed(() => {
   const other = myRole.value === 'host' ? 'guest' : 'host'
   return resolveStartersByIds(pokedex.value, gameState.value[other]?.team)
 })
-const showDraw = computed(
-  () => gameReady.value && !gameOver.value && myProposals.value.length === 3,
 const myLie = computed(() => {
   if (!myRole.value) return null
   const id = gameState.value[myRole.value]?.lieId
@@ -178,9 +178,9 @@ function syncInviteQuery(next) {
     return
   }
   if (!code && route.query.code) {
-    const query = { ...route.query }
-    delete query.code
-    router.replace({ query })
+    const nextQuery = { ...route.query }
+    delete nextQuery.code
+    router.replace({ query: nextQuery })
   }
 }
 
@@ -242,8 +242,8 @@ function onToggleFlag(fieldId, enabled) {
     else startersError.value = result.message
   })
 }
-  if (!pokedex.value.length) return
-  if (localPlayerRole(nextInvite) !== 'host' || advancing) return
+
+async function maybeHostAdvance(nextInvite) {
   if (!nextInvite || !pokedex.value.length) return
   const incoming = parseGameState(nextInvite)
   if (isEnded(incoming)) return
@@ -289,6 +289,8 @@ function onToggleFlag(fieldId, enabled) {
       }
     }
   })
+}
+
 async function submitName() {
   const name = nameDraft.value.trim()
   if (!name) return
@@ -311,8 +313,6 @@ async function submitName() {
   await maybeHostAdvance(result.invite)
 }
 
-async function pickForFriend(pokemonId) {
-  if (!invite.value || !myRole.value || myPick.value || savingPick.value) return
 function resetLieSearch() {
   lieSearchOpen.value = false
   assigningLie.value = false
@@ -376,6 +376,8 @@ async function placeLie(underId) {
 async function pickForFriend(pokemonId) {
   if (assigningLie.value) return
   if (myLie.value && Number(pokemonId) === Number(myLie.value.id)) return
+  if (!invite.value || !myRole.value || myPick.value || savingPick.value) return
+  savingPick.value = true
   const field = myRole.value === 'host' ? 'host_pick' : 'guest_pick'
   const result = await updateInvite(invite.value.id, { [field]: pokemonId })
   savingPick.value = false
@@ -388,8 +390,6 @@ async function pickForFriend(pokemonId) {
 }
 
 function onInviteCreated(next) {
-  invite.value = next
-  router.replace({ query: { ...route.query, code: next.code } })
   applyInvite(next)
 }
 
@@ -431,6 +431,8 @@ async function restoreSession() {
   if (route.query.code) {
     inviteError.value = 'Cette partie n’est plus disponible. Tu peux en lancer une nouvelle.'
   }
+}
+
 function scheduleSearch(value) {
   window.clearTimeout(searchTimer)
   if (!value.trim()) {
@@ -451,21 +453,19 @@ function scheduleSearch(value) {
   }, 220)
 }
 
-watch(query, (value) => {
-  if (skipNextSearch) {
 watch(invite, (next) => {
   if (next && isActiveGame(next)) rememberGameSession(STARTER_GAME_ID, next)
   else forgetGameSession(STARTER_GAME_ID)
 })
 
+watch(query, (value) => {
+  if (skipNextSearch) {
     skipNextSearch = false
     return
   }
   scheduleSearch(value)
 })
 
-async function selectPokemon(entry) {
-  loadingDetails.value = true
 watch(
   detailsNeeded,
   async (ids) => {
@@ -496,6 +496,8 @@ watch(
   },
 )
 
+async function selectPokemon(entry) {
+  loadingDetails.value = true
   detailsError.value = ''
   suggestions.value = []
   skipNextSearch = true
@@ -522,9 +524,9 @@ async function onSubmit() {
 }
 
 onMounted(async () => {
+  await purgeExpiredInvites()
   try {
     pokedex.value = await loadPokedexIndex()
-  await purgeExpiredInvites()
     indexReady.value = true
     fillFrenchNames()
   } catch {
@@ -532,9 +534,9 @@ onMounted(async () => {
     return
   }
 
-  await restoreInviteFromQuery()
-  if (localPlayerName(invite.value)) {
   await restoreSession()
+  if (localPlayerName(invite.value)) {
+    enteredName.value = localPlayerName(invite.value)
     nameDraft.value = enteredName.value
   }
   await maybeHostAdvance(invite.value)
@@ -553,8 +555,6 @@ onUnmounted(() => {
         <p class="eyebrow">Jeu</p>
         <h2>Starter à l’aveugle</h2>
       </div>
-      <InviteFriendMenu
-        :game-id="STARTER_GAME_ID"
       <div class="game-bar__actions">
         <MatchHistoryMenu :game-id="STARTER_GAME_ID" />
         <InviteFriendMenu
@@ -566,6 +566,8 @@ onUnmounted(() => {
           @invite-ended="onInviteEnded"
         />
       </div>
+    </header>
+
     <p v-if="friendName" class="friend-banner friend-banner--ok">
       Ami connecté : <strong>{{ friendName }}</strong>
     </p>
@@ -576,9 +578,9 @@ onUnmounted(() => {
       En attente d’un ami · code {{ invite.code }}
     </p>
     <p v-else-if="inviteError" class="friend-banner friend-banner--error">{{ inviteError }}</p>
+    <p v-if="endedNotice" class="friend-banner">{{ endedNotice }}</p>
     <p v-if="startersError" class="friend-banner friend-banner--error">{{ startersError }}</p>
 
-    <p v-if="endedNotice" class="friend-banner">{{ endedNotice }}</p>
     <section v-if="!mySavedName" class="name-card" aria-labelledby="name-title">
       <h3 id="name-title">Ton nom</h3>
       <p class="dex-desc">Il s’affichera chez ton ami comme joueur connecté.</p>
@@ -602,8 +604,6 @@ onUnmounted(() => {
       Invite un ami via les trois points pour lancer les 6 manches.
     </p>
 
-    <StarterDraw
-      v-if="showDraw"
     <InfoFlagsPanel
       v-if="showFlags"
       :flags="infoFlags"
@@ -631,10 +631,10 @@ onUnmounted(() => {
       :pokemon="myProposals"
       :details-by-id="detailsById"
       :flags="infoFlags"
+      :friend-name="friendName"
+      :round="gameState.round"
       :picked-id="myPick"
       :waiting="Boolean(myPick) && !theirPick"
-      :disabled="savingPick"
-      @pick="pickForFriend"
       :disabled="savingPick || savingLie"
       :lie="myLie"
       :lie-under-id="myLieUnderId"
@@ -678,6 +678,8 @@ onUnmounted(() => {
         <button type="button" class="lie-cancel" @click="resetLieSearch">Annuler</button>
       </template>
     </StarterDraw>
+    <p v-else-if="dealing" class="friend-banner">Préparation de la manche…</p>
+
     <section v-if="gameOver" class="draw-result" aria-labelledby="teams-title">
       <h3 id="teams-title">Les 6 Pokémon choisis</h3>
       <p class="dex-desc">Seules ces équipes sont conservées.</p>
@@ -703,16 +705,16 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <section class="dex" aria-labelledby="dex-title">
-      <h3 id="dex-title">Pokédex</h3>
     <section v-if="!showDraw" class="dex" aria-labelledby="dex-title">
+      <h3 id="dex-title">Pokédex</h3>
+      <p class="dex-desc">
         Recherche n’importe quel Pokémon par nom français, nom anglais ou numéro.
       </p>
 
       <form class="search" @submit.prevent="onSubmit">
-        <label class="sr-only" for="pokemon-search">Rechercher un Pokémon</label>
+        <label class="sr-only" for="pokedex-search">Rechercher un Pokémon</label>
         <input
-          id="pokemon-search"
+          id="pokedex-search"
           v-model="query"
           type="search"
           placeholder="Dracaufeu, Pikachu, 25…"
@@ -759,8 +761,6 @@ onUnmounted(() => {
   min-width: 0;
 }
 
-.eyebrow {
-  margin: 0;
 .game-bar__actions {
   display: flex;
   align-items: center;
@@ -768,6 +768,8 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
+.eyebrow {
+  margin: 0;
   font-size: 0.72rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -891,8 +893,6 @@ h3 {
   font-size: 16px;
 }
 
-.search button {
-  border: none;
 .search button,
 .start-btn {
   border: none;
@@ -912,6 +912,8 @@ h3 {
   margin: 0;
   color: var(--text-soft);
   font-size: 0.92rem;
+}
+
 .hint {
   margin: 0.55rem 0 0;
   font-size: 0.88rem;
@@ -949,8 +951,6 @@ h3 {
   color: var(--teal);
 }
 
-.sr-only {
-  position: absolute;
 .lie-choice {
   margin-top: 0.75rem;
   display: grid;
@@ -991,6 +991,8 @@ h3 {
   color: var(--ink);
 }
 
+.sr-only {
+  position: absolute;
   width: 1px;
   height: 1px;
   overflow: hidden;
