@@ -1,16 +1,47 @@
 <script setup>
+import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
-import { games } from '../services/games.js'
 import JoinInviteForm from '../components/JoinInviteForm.vue'
+import { games } from '../services/games.js'
+import {
+  fetchActiveInviteForDevice,
+  purgeExpiredInvites,
+  resumeSummary,
+  STARTER_GAME_ID,
+} from '../services/invites.js'
+
+const resumeInvite = ref(null)
+const resumeLabel = computed(() => resumeSummary(resumeInvite.value))
+
+onMounted(async () => {
+  await purgeExpiredInvites()
+  const result = await fetchActiveInviteForDevice(STARTER_GAME_ID)
+  if (result.success) resumeInvite.value = result.invite
+})
 </script>
 
 <template>
   <div class="dashboard">
     <JoinInviteForm />
 
+    <section v-if="resumeInvite" class="resume-card" aria-labelledby="resume-title">
+      <p class="eyebrow">Partie en cours</p>
+      <h2 id="resume-title">Reprendre Starter à l’aveugle</h2>
+      <p class="resume-card__desc">
+        Tu as quitté une partie. Tu peux y revenir sans perdre la progression.
+        <span v-if="resumeLabel"> {{ resumeLabel }}.</span>
+      </p>
+      <RouterLink
+        class="resume-btn"
+        :to="{ path: '/starter-aveugle', query: { code: resumeInvite.code } }"
+      >
+        Reprendre la partie
+      </RouterLink>
+    </section>
+
     <section class="games-section" aria-labelledby="games-title">
       <div class="section-heading">
-        <p class="eyebrow">Ludothèque</p>
+        <p class="eyebrow eyebrow--brown">Ludothèque</p>
         <h2 id="games-title">Tous les jeux</h2>
       </div>
 
@@ -50,7 +81,8 @@ import JoinInviteForm from '../components/JoinInviteForm.vue'
 
 .section-heading h2,
 .empty-library h3,
-.game-card h3 {
+.game-card h3,
+.resume-card h2 {
   font-family: var(--display);
   color: inherit;
 }
@@ -61,6 +93,10 @@ import JoinInviteForm from '../components/JoinInviteForm.vue'
   letter-spacing: 0.14em;
   text-transform: uppercase;
   font-weight: 700;
+  color: var(--teal);
+}
+
+.eyebrow--brown {
   color: var(--brown);
 }
 
@@ -69,6 +105,40 @@ import JoinInviteForm from '../components/JoinInviteForm.vue'
   font-size: clamp(1.7rem, 3vw, 2.2rem);
   font-weight: 600;
   color: var(--ink);
+}
+
+.resume-card {
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--teal) 45%, var(--taupe));
+  border-radius: 22px;
+  padding: 1.15rem 1.2rem 1.25rem;
+  box-shadow: var(--shadow);
+}
+
+.resume-card h2 {
+  margin: 0;
+  font-size: 1.45rem;
+  font-weight: 600;
+}
+
+.resume-card__desc {
+  margin: 0.35rem 0 0;
+  color: var(--text-soft);
+  font-size: 0.92rem;
+}
+
+.resume-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin-top: 0.95rem;
+  padding: 0.7rem 1.1rem;
+  border-radius: 12px;
+  background: var(--teal);
+  color: var(--cream);
+  font-weight: 700;
+  text-decoration: none;
 }
 
 .games-grid {

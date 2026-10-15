@@ -1,18 +1,33 @@
 <script setup>
+import PokemonPreviewInfo from './PokemonPreviewInfo.vue'
 import { starterArtworkUrl } from '../services/pokeapi.js'
 import { TOTAL_ROUNDS } from '../services/starterAveugle.js'
 
 defineProps({
   pokemon: { type: Array, default: () => [] },
+  detailsById: { type: Object, default: () => ({}) },
+  flags: { type: Object, default: () => ({}) },
   friendName: { type: String, default: '' },
   round: { type: Number, default: 1 },
   pickedId: { type: Number, default: null },
   waiting: { type: Boolean, default: false },
   loading: { type: Boolean, default: false },
   disabled: { type: Boolean, default: false },
+  lie: { type: Object, default: null },
+  lieUnderId: { type: Number, default: null },
+  searchingLie: { type: Boolean, default: false },
+  assigningLie: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['pick'])
+const emit = defineEmits(['pick', 'start-lie', 'place-lie'])
+
+function onCardClick(id) {
+  emit('pick', id)
+}
+
+function onPlace(id) {
+  emit('place-lie', id)
+}
 </script>
 
 <template>
@@ -20,6 +35,9 @@ const emit = defineEmits(['pick'])
     <p class="draw-round">Manche {{ round }} / {{ TOTAL_ROUNDS }}</p>
     <h3 id="draw-title">Voici les propositions pour {{ friendName }}</h3>
     <p class="draw-desc">Choisis-en un : il sera ajouté à son équipe. Sans méga, primo-forme ni Gigamax.</p>
+    <p v-if="assigningLie" class="draw-hint draw-hint--lie">
+      Sélectionne l’un des 3 Pokémon : le mensonge s’affichera en dessous, en rouge. Tu ne pourras pas le choisir pour l’équipe.
+    </p>
 
     <p v-if="loading && !pokemon.length" class="draw-hint">Tirage en cours…</p>
 
@@ -28,16 +46,41 @@ const emit = defineEmits(['pick'])
         <button
           type="button"
           class="pick-card"
-          :class="{ 'pick-card--selected': pickedId === item.id }"
-          :disabled="disabled || waiting || Boolean(pickedId)"
-          @click="emit('pick', item.id)"
+          :class="{
+            'pick-card--selected': pickedId === item.id,
+            'pick-card--target': assigningLie,
+          }"
+          :disabled="assigningLie ? false : disabled || waiting || Boolean(pickedId)"
+          @click="assigningLie ? onPlace(item.id) : onCardClick(item.id)"
         >
-          <img :src="starterArtworkUrl(item.id)" :alt="item.fr || item.en" />
-          <p class="num">#{{ String(item.id).padStart(4, '0') }}</p>
-          <strong>{{ item.fr || item.en }}</strong>
+          <img :src="starterArtworkUrl(item.id)" alt="" />
+          <PokemonPreviewInfo :pokemon="detailsById[item.id]" :flags="flags" />
         </button>
+
+        <article
+          v-if="lie && lieUnderId === item.id"
+          class="pick-card pick-card--lie"
+          aria-label="Pokémon mensonge"
+        >
+          <p class="lie-tag">Mensonge</p>
+          <img :src="starterArtworkUrl(lie.id)" alt="" />
+          <PokemonPreviewInfo :pokemon="detailsById[lie.id]" :flags="flags" />
+        </article>
       </li>
     </ul>
+
+    <button
+      v-if="!lie && !pickedId && !searchingLie && !assigningLie && pokemon.length === 3"
+      type="button"
+      class="lie-btn"
+      @click="emit('start-lie')"
+    >
+      Choisir un mensonge
+    </button>
+
+    <div v-if="searchingLie && !lie" class="lie-search">
+      <slot name="lie-search" />
+    </div>
 
     <p v-if="pickedId && waiting" class="draw-hint">
       Choix envoyé. En attente de {{ friendName }}…
@@ -80,6 +123,10 @@ h3 {
   font-weight: 600;
 }
 
+.draw-hint--lie {
+  color: #8a3d32;
+}
+
 .draw-grid {
   list-style: none;
   margin: 0.95rem 0 0;
@@ -87,6 +134,12 @@ h3 {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.7rem;
+}
+
+.draw-grid li {
+  display: grid;
+  gap: 0.55rem;
+  align-content: start;
 }
 
 .pick-card {
@@ -108,6 +161,17 @@ h3 {
   background: color-mix(in srgb, var(--teal) 12%, var(--surface));
 }
 
+.pick-card--target {
+  border-color: color-mix(in srgb, #8a3d32 55%, var(--taupe));
+  cursor: pointer;
+}
+
+.pick-card--lie {
+  background: color-mix(in srgb, #8a3d32 12%, var(--surface));
+  border-color: #8a3d32;
+  cursor: default;
+}
+
 .pick-card:disabled:not(.pick-card--selected) {
   opacity: 0.55;
 }
@@ -117,17 +181,31 @@ h3 {
   max-height: 110px;
 }
 
-.num {
-  margin: 0.25rem 0 0;
-  font-weight: 700;
-  color: var(--teal);
-  font-size: 0.78rem;
+.lie-tag {
+  margin: 0 0 0.35rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 800;
+  color: #8a3d32;
 }
 
-strong {
-  display: block;
-  margin-top: 0.1rem;
-  font-size: 0.92rem;
+.lie-btn {
+  width: 100%;
+  margin-top: 0.9rem;
+  border: none;
+  border-radius: 12px;
+  min-height: 44px;
+  padding: 0 1rem;
+  background: color-mix(in srgb, #8a3d32 86%, var(--ink));
+  color: var(--cream);
+  font-weight: 700;
+}
+
+.lie-search {
+  margin-top: 0.9rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
 }
 
 @media (max-width: 720px) {

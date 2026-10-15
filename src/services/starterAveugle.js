@@ -3,11 +3,43 @@ import { pickRandomStarters } from './pokeapi.js'
 export const TOTAL_ROUNDS = 6
 export const GAME_DURATION_MS = 90 * 60 * 1000
 
+export const INFO_FIELDS = [
+  { id: 'number', label: 'Numéro' },
+  { id: 'englishName', label: 'Nom anglais' },
+  { id: 'genus', label: 'Catégorie' },
+  { id: 'types', label: 'Types' },
+  { id: 'evolutionStatus', label: 'Statut d’évolution' },
+  { id: 'rarity', label: 'Rareté (bébé, légendaire, mythique)' },
+  { id: 'size', label: 'Taille et poids' },
+  { id: 'baseExperience', label: 'Expérience de base' },
+  { id: 'abilities', label: 'Talents' },
+  { id: 'stats', label: 'Statistiques de base' },
+  { id: 'weaknesses', label: 'Faiblesses et résistances' },
+  { id: 'generation', label: 'Génération' },
+  { id: 'habitat', label: 'Habitat' },
+  { id: 'color', label: 'Couleur' },
+  { id: 'growthRate', label: 'Croissance' },
+  { id: 'eggGroups', label: 'Groupes d’œuf' },
+  { id: 'gender', label: 'Sexe' },
+  { id: 'captureRate', label: 'Taux de capture' },
+  { id: 'baseHappiness', label: 'Bonheur de base' },
+  { id: 'hatchSteps', label: 'Éclosion' },
+  { id: 'heldItems', label: 'Objets tenus' },
+  { id: 'flavors', label: 'Descriptions du Pokédex' },
+  { id: 'moves', label: 'Capacités par niveau' },
+]
+
+export function defaultInfoFlags() {
+  return Object.fromEntries(INFO_FIELDS.map((field) => [field.id, false]))
+}
+
 function emptyPlayer() {
   return {
     playerName: '',
     proposals: [],
     team: [],
+    lieId: null,
+    lieUnderId: null,
   }
 }
 
@@ -16,6 +48,8 @@ export function emptyGameState() {
     round: 1,
     status: 'naming',
     seen: [],
+    infoFlags: defaultInfoFlags(),
+    matchSaved: false,
     host: emptyPlayer(),
     guest: emptyPlayer(),
   }
@@ -29,6 +63,8 @@ export function parseGameState(invite) {
     round: Number(raw.round) > 0 ? Number(raw.round) : 1,
     status: raw.status || 'naming',
     seen: Array.isArray(raw.seen) ? raw.seen.map(Number) : [],
+    infoFlags: { ...defaultInfoFlags(), ...(raw.infoFlags || {}) },
+    matchSaved: Boolean(raw.matchSaved),
     host: { ...emptyPlayer(), ...(raw.host || {}) },
     guest: { ...emptyPlayer(), ...(raw.guest || {}) },
   }
@@ -48,24 +84,74 @@ export function usedPokemonIds(state) {
     ...(state?.guest?.team || []),
     ...(state?.host?.proposals || []),
     ...(state?.guest?.proposals || []),
-  ].map(Number)
+    state?.host?.lieId,
+    state?.guest?.lieId,
+  ]
+    .filter(Boolean)
+    .map(Number)
+}
+
+export function withLie(state, role, lieId, underId) {
+  const next = cloneState(state)
+  const proposals = (next[role].proposals || []).map(Number)
+  const id = Number(lieId)
+  const under = Number(underId)
+  if (!id || proposals.includes(id) || !proposals.includes(under)) return next
+  next[role].lieId = id
+  next[role].lieUnderId = under
+  next.seen = [...new Set([...(next.seen || []).map(Number), id])]
+  return next
 }
 
 export function withPlayerName(state, role, name) {
   const next = cloneState(state)
   next[role].playerName = String(name || '').trim()
-  if (bothNamed(next) && next.status === 'naming') next.status = 'picking'
+  if (bothNamed(next) && next.status === 'naming') next.status = 'info'
+  return next
+}
+
+export function withInfoFlag(state, fieldId, enabled) {
+  const next = cloneState(state)
+  next.infoFlags = { ...defaultInfoFlags(), ...(next.infoFlags || {}), [fieldId]: Boolean(enabled) }
+  return next
+}
+
+export function isInfoPhase(state) {
+  return state?.status === 'info'
+}
+
+export function isPicking(state) {
+  return state?.status === 'picking'
+}
+
+export function isEnded(state) {
+  return state?.status === 'ended'
+}
+
+export function endGameState(state) {
+  const next = cloneState(state)
+  next.status = 'ended'
+  next.host.proposals = []
+  next.guest.proposals = []
   return next
 }
 
 export function needsDeal(state) {
-  if (!bothNamed(state) || state.status === 'done') return false
+  if (!isPicking(state)) return false
   return (state.host.proposals || []).length !== 3 || (state.guest.proposals || []).length !== 3
+}
+
+function clearLies(next) {
+  next.host.lieId = null
+  next.host.lieUnderId = null
+  next.guest.lieId = null
+  next.guest.lieUnderId = null
 }
 
 export function dealRound(state, index) {
   const next = cloneState(state)
   next.status = 'picking'
+  clearLies(next)
   const exclude = [...usedPokemonIds(next), ...(next.seen || [])]
   const forGuest = pickRandomStarters(index, 3, exclude)
   const forHost = pickRandomStarters(index, 3, [...exclude, ...forGuest.map((item) => item.id)])
@@ -81,6 +167,7 @@ export function completeRound(state, hostPick, guestPick, index) {
   next.host.team = [...(next.host.team || []), Number(guestPick)]
   next.host.proposals = []
   next.guest.proposals = []
+  clearLies(next)
 
   if (next.round >= TOTAL_ROUNDS) {
     next.status = 'done'

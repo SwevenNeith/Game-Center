@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { createInvite, isInviteExpired, otherPlayerName, watchInvite } from '../services/invites.js'
+import { createInvite, endInvite, isInviteExpired, otherPlayerName, watchInvite } from '../services/invites.js'
 
 const props = defineProps({
   invite: { type: Object, default: null },
@@ -8,11 +8,13 @@ const props = defineProps({
   extra: { type: Object, default: () => ({}) },
 })
 
-const emit = defineEmits(['invite-created', 'invite-updated'])
+const emit = defineEmits(['invite-created', 'invite-updated', 'invite-ended'])
 
 const open = ref(false)
 const loading = ref(false)
 const copied = ref(false)
+const ending = ref(false)
+const confirmEnd = ref(false)
 const errorMessage = ref('')
 const now = ref(Date.now())
 const rootEl = ref(null)
@@ -22,6 +24,7 @@ let tickId = null
 const current = computed(() => props.invite)
 const friendName = computed(() => otherPlayerName(current.value))
 const expired = computed(() => isInviteExpired(current.value))
+const canEnd = computed(() => Boolean(current.value && !expired.value))
 const remainingMs = computed(() => {
   if (!current.value?.expires_at) return 0
   return Math.max(0, new Date(current.value.expires_at).getTime() - now.value)
@@ -35,6 +38,7 @@ const remainingLabel = computed(() => {
 
 function closeMenu() {
   open.value = false
+  confirmEnd.value = false
 }
 
 function onDocumentPointer(event) {
@@ -57,6 +61,25 @@ async function onInvite() {
   }
 
   emit('invite-created', result.invite)
+}
+
+async function onEndGame() {
+  if (!current.value || ending.value) return
+  if (!confirmEnd.value) {
+    confirmEnd.value = true
+    return
+  }
+  ending.value = true
+  errorMessage.value = ''
+  const result = await endInvite(current.value)
+  ending.value = false
+  confirmEnd.value = false
+  if (!result.success) {
+    errorMessage.value = result.message
+    return
+  }
+  emit('invite-ended', result.invite)
+  closeMenu()
 }
 
 async function copyCode() {
@@ -127,6 +150,28 @@ onUnmounted(() => {
           />
         </svg>
         {{ loading ? 'Génération…' : 'Inviter un ami' }}
+      </button>
+
+      <button
+        v-if="canEnd"
+        type="button"
+        class="invite-item invite-item--danger"
+        :disabled="ending"
+        @click="onEndGame"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M12 3a9 9 0 1 0 9 9 9 9 0 0 0-9-9Zm3.5 12.1-1.4 1.4L12 13.4l-2.1 2.1-1.4-1.4L10.6 12 8.5 9.9l1.4-1.4L12 10.6l2.1-2.1 1.4 1.4L13.4 12Z"
+          />
+        </svg>
+        {{
+          ending
+            ? 'Déconnexion…'
+            : confirmEnd
+              ? 'Confirmer la fin'
+              : 'Mettre fin à la partie'
+        }}
       </button>
 
       <div v-if="errorMessage" class="invite-status invite-status--error">{{ errorMessage }}</div>
@@ -231,6 +276,18 @@ onUnmounted(() => {
 
 .invite-item:hover {
   background: color-mix(in srgb, var(--teal) 10%, var(--surface));
+}
+
+.invite-item--danger {
+  color: #8a3d32;
+}
+
+.invite-item--danger svg {
+  color: #8a3d32;
+}
+
+.invite-item--danger:hover {
+  background: color-mix(in srgb, #8a3d32 12%, var(--surface));
 }
 
 .invite-status {

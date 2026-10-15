@@ -1,16 +1,26 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import InfoFlagsPanel from '../components/InfoFlagsPanel.vue'
 import InviteFriendMenu from '../components/InviteFriendMenu.vue'
+import MatchHistoryMenu from '../components/MatchHistoryMenu.vue'
 import PokemonFiche from '../components/PokemonFiche.vue'
+import PokemonPreviewInfo from '../components/PokemonPreviewInfo.vue'
 import StarterDraw from '../components/StarterDraw.vue'
 import {
+  fetchActiveInviteForDevice,
   fetchInviteByCode,
+  fetchInviteById,
+  forgetGameSession,
+  isActiveGame,
   isInviteExpired,
   joinInvite,
   localPlayerName,
   localPlayerRole,
   otherPlayerName,
+  purgeExpiredInvites,
+  rememberGameSession,
+  saveCompletedMatch,
   STARTER_GAME_ID,
   updateInvite,
 } from '../services/invites.js'
@@ -23,12 +33,17 @@ import {
   starterArtworkUrl,
 } from '../services/pokeapi.js'
 import {
-  bothNamed,
   completeRound,
   dealRound,
+  defaultInfoFlags,
   emptyGameState,
+  isEnded,
+  isInfoPhase,
+  isPicking,
   needsDeal,
   parseGameState,
+  withInfoFlag,
+  withLie,
   withPlayerName,
 } from '../services/starterAveugle.js'
 
@@ -37,6 +52,7 @@ const router = useRouter()
 
 const invite = ref(null)
 const inviteError = ref('')
+const endedNotice = ref('')
 const query = ref('')
 const suggestions = ref([])
 const searching = ref(false)
@@ -50,9 +66,29 @@ const nameDraft = ref('')
 const enteredName = ref('')
 const savingName = ref(false)
 const savingPick = ref(false)
+const savingStart = ref(false)
+const localFlags = ref(defaultInfoFlags())
+const detailsById = ref({})
+const lieSearchOpen = ref(false)
+const assigningLie = ref(false)
+const pendingLie = ref(null)
+const lieError = ref('')
+const savingLie = ref(false)
 let searchTimer = null
 let skipNextSearch = false
-let advancing = false
+let hostWriteChain = Promise.resolve()
+
+function enqueueHostWrite(task) {
+  const run = hostWriteChain.then(task)
+  hostWriteChain = run.catch(() => {})
+  return run
+}
+
+async function latestInvite(fallback) {
+  if (!fallback?.id) return fallback
+  const latest = await fetchInviteById(fallback.id)
+  return latest.success ? latest.invite : fallback
+}
 
 const gameState = computed(() => parseGameState(invite.value))
 const myRole = computed(() => localPlayerRole(invite.value))
@@ -67,9 +103,6 @@ const waitingForFriend = computed(
 const waitingForFriendName = computed(
   () => Boolean(invite.value && guestJoined.value && !friendName.value),
 )
-const gameReady = computed(() => Boolean(invite.value && bothNamed(gameState.value)))
-const gameOver = computed(() => gameState.value.status === 'done')
-const myPick = computed(() => {
   if (!invite.value || !myRole.value) return null
   return myRole.value === 'host' ? invite.value.host_pick : invite.value.guest_pick
 })
@@ -92,49 +125,170 @@ const theirTeam = computed(() => {
 })
 const showDraw = computed(
   () => gameReady.value && !gameOver.value && myProposals.value.length === 3,
+const myLie = computed(() => {
+  if (!myRole.value) return null
+  const id = gameState.value[myRole.value]?.lieId
+  if (!id) return null
+  return resolveStartersByIds(pokedex.value, [id])[0] || { id: Number(id) }
+})
+const myLieUnderId = computed(() => {
+  if (!myRole.value) return null
+  const id = gameState.value[myRole.value]?.lieUnderId
+  return id ? Number(id) : null
+})
+const detailsNeeded = computed(() => {
+  const ids = myProposals.value.map((item) => item.id)
+  if (myLie.value?.id) ids.push(myLie.value.id)
+  if (pendingLie.value?.id) ids.push(pendingLie.value.id)
+  if (selected.value?.id) ids.push(selected.value.id)
+  return [...new Set(ids.filter(Boolean))]
+})
+const picking = computed(() => isPicking(gameState.value))
+const infoPhase = computed(() => Boolean(invite.value && isInfoPhase(gameState.value)))
+const showFlags = computed(
+  () => !gameOver.value && !picking.value && Boolean(mySavedName.value || invite.value),
+)
+const showDraw = computed(
+  () => picking.value && !gameOver.value && myProposals.value.length === 3,
 )
 const dealing = computed(
-  () => gameReady.value && !gameOver.value && myProposals.value.length !== 3,
+  () => picking.value && !gameOver.value && myProposals.value.length !== 3,
+)
+const infoFlags = computed(() =>
+  invite.value ? gameState.value.infoFlags : localFlags.value,
+)
+const flagsEditable = computed(
+  () => (!myRole.value || myRole.value === 'host') && !picking.value && !gameOver.value,
 )
 
 const inviteExtra = computed(() => {
   const state = emptyGameState()
   state.host.playerName = mySavedName.value
+  state.infoFlags = { ...infoFlags.value }
   return {
     host_name: mySavedName.value || 'Hôte',
     game_state: state,
   }
 })
 
-async function maybeHostAdvance(nextInvite) {
-  if (!pokedex.value.length) return
-  if (localPlayerRole(nextInvite) !== 'host' || advancing) return
-
-  const state = parseGameState(nextInvite)
-  if (needsDeal(state)) {
-    advancing = true
-    const result = await updateInvite(nextInvite.id, {
-      game_state: dealRound(state, pokedex.value),
-    })
-    advancing = false
-    if (result.success) invite.value = result.invite
-    else startersError.value = result.message
+function syncInviteQuery(next) {
+  const code = next?.code
+  if (code && route.query.code !== code) {
+    router.replace({ query: { ...route.query, code } })
     return
   }
-
-  if (state.status === 'picking' && nextInvite.host_pick && nextInvite.guest_pick) {
-    advancing = true
-    const result = await updateInvite(nextInvite.id, {
-      game_state: completeRound(state, nextInvite.host_pick, nextInvite.guest_pick, pokedex.value),
-      host_pick: null,
-      guest_pick: null,
-    })
-    advancing = false
-    if (result.success) invite.value = result.invite
-    else startersError.value = result.message
+  if (!code && route.query.code) {
+    const query = { ...route.query }
+    delete query.code
+    router.replace({ query })
   }
 }
 
+function applyInvite(next, options = {}) {
+  if (!next || isEnded(parseGameState(next))) {
+    if (invite.value) {
+      forgetGameSession(STARTER_GAME_ID)
+      if (!options.silent) {
+        endedNotice.value = 'La partie a été terminée. Les deux appareils sont déconnectés.'
+      }
+    }
+    invite.value = null
+    syncInviteQuery(null)
+    return
+  }
+
+  endedNotice.value = ''
+  rememberGameSession(STARTER_GAME_ID, next)
+  invite.value = next
+  syncInviteQuery(next)
+  if (!options.skipAdvance) maybeHostAdvance(next)
+}
+
+async function persistMatchIfDone(nextInvite) {
+  if (!nextInvite || !pokedex.value.length) return
+  const saved = await saveCompletedMatch(nextInvite, pokedex.value)
+  if (saved.invite) invite.value = saved.invite
+  else if (!saved.success) startersError.value = saved.message
+}
+
+async function confirmInfo() {
+  if (!invite.value || myRole.value !== 'host' || !infoPhase.value || !pokedex.value.length) return
+  savingStart.value = true
+  await enqueueHostWrite(async () => {
+    const current = await latestInvite(invite.value)
+    const state = parseGameState(current)
+    if (!isInfoPhase(state)) return
+    const result = await updateInvite(current.id, {
+      game_state: dealRound(state, pokedex.value),
+    })
+    if (result.success) invite.value = result.invite
+    else startersError.value = result.message
+  })
+  savingStart.value = false
+}
+
+function onToggleFlag(fieldId, enabled) {
+  if (!flagsEditable.value) return
+  if (!invite.value) {
+    localFlags.value = { ...localFlags.value, [fieldId]: enabled }
+    return
+  }
+  enqueueHostWrite(async () => {
+    const current = await latestInvite(invite.value)
+    const result = await updateInvite(current.id, {
+      game_state: withInfoFlag(parseGameState(current), fieldId, enabled),
+    })
+    if (result.success) invite.value = result.invite
+    else startersError.value = result.message
+  })
+}
+  if (!pokedex.value.length) return
+  if (localPlayerRole(nextInvite) !== 'host' || advancing) return
+  if (!nextInvite || !pokedex.value.length) return
+  const incoming = parseGameState(nextInvite)
+  if (isEnded(incoming)) return
+
+  if (incoming.status === 'done') {
+    await persistMatchIfDone(nextInvite)
+    return
+  }
+
+  if (localPlayerRole(nextInvite) !== 'host') return
+
+  await enqueueHostWrite(async () => {
+    const current = await latestInvite(nextInvite)
+    const state = parseGameState(current)
+
+    if (state.status === 'done') {
+      await persistMatchIfDone(current)
+      return
+    }
+
+    if (needsDeal(state)) {
+      const result = await updateInvite(current.id, {
+        game_state: dealRound(state, pokedex.value),
+      })
+      if (result.success) invite.value = result.invite
+      else startersError.value = result.message
+      return
+    }
+
+    if (state.status === 'picking' && current.host_pick && current.guest_pick) {
+      const result = await updateInvite(current.id, {
+        game_state: completeRound(state, current.host_pick, current.guest_pick, pokedex.value),
+        host_pick: null,
+        guest_pick: null,
+      })
+      if (result.success) {
+        invite.value = result.invite
+        if (parseGameState(result.invite).status === 'done') {
+          await persistMatchIfDone(result.invite)
+        }
+      } else {
+        startersError.value = result.message
+      }
+    }
+  })
 async function submitName() {
   const name = nameDraft.value.trim()
   if (!name) return
@@ -159,7 +313,69 @@ async function submitName() {
 
 async function pickForFriend(pokemonId) {
   if (!invite.value || !myRole.value || myPick.value || savingPick.value) return
-  savingPick.value = true
+function resetLieSearch() {
+  lieSearchOpen.value = false
+  assigningLie.value = false
+  pendingLie.value = null
+  lieError.value = ''
+  query.value = ''
+  selected.value = null
+  suggestions.value = []
+}
+
+function startLieSearch() {
+  if (myPick.value || myLie.value) return
+  lieError.value = ''
+  assigningLie.value = false
+  pendingLie.value = null
+  query.value = ''
+  selected.value = null
+  suggestions.value = []
+  lieSearchOpen.value = true
+}
+
+function chooseAsLie() {
+  if (!selected.value || myPick.value) return
+  const id = Number(selected.value.id)
+  if (myProposals.value.some((item) => Number(item.id) === id)) {
+    lieError.value = 'Le mensonge doit être différent des 3 Pokémon aléatoires.'
+    return
+  }
+  lieError.value = ''
+  pendingLie.value = selected.value
+  detailsById.value = { ...detailsById.value, [id]: selected.value }
+  lieSearchOpen.value = false
+  assigningLie.value = true
+}
+
+async function placeLie(underId) {
+  if (!pendingLie.value || !invite.value || !myRole.value || savingLie.value || myPick.value) return
+  const lieId = Number(pendingLie.value.id)
+  if (myProposals.value.some((item) => Number(item.id) === lieId)) {
+    lieError.value = 'Le mensonge doit être différent des 3 Pokémon aléatoires.'
+    assigningLie.value = false
+    lieSearchOpen.value = true
+    return
+  }
+  savingLie.value = true
+  const latest = await latestInvite(invite.value)
+  const result = await updateInvite(latest.id, {
+    game_state: withLie(parseGameState(latest), myRole.value, lieId, underId),
+  })
+  savingLie.value = false
+  if (!result.success) {
+    startersError.value = result.message
+    return
+  }
+  invite.value = result.invite
+  assigningLie.value = false
+  pendingLie.value = null
+  lieError.value = ''
+}
+
+async function pickForFriend(pokemonId) {
+  if (assigningLie.value) return
+  if (myLie.value && Number(pokemonId) === Number(myLie.value.id)) return
   const field = myRole.value === 'host' ? 'host_pick' : 'guest_pick'
   const result = await updateInvite(invite.value.id, { [field]: pokemonId })
   savingPick.value = false
@@ -174,36 +390,47 @@ async function pickForFriend(pokemonId) {
 function onInviteCreated(next) {
   invite.value = next
   router.replace({ query: { ...route.query, code: next.code } })
-  maybeHostAdvance(next)
+  applyInvite(next)
 }
 
 function onInviteUpdated(next) {
-  invite.value = next
-  maybeHostAdvance(next)
+  applyInvite(next)
 }
 
-async function restoreInviteFromQuery() {
-  const code = route.query.code
-  if (!code) return
-  const joined = await joinInvite(String(code), STARTER_GAME_ID)
-  if (joined.success) {
-    invite.value = joined.invite
-    inviteError.value = ''
-    return
-  }
-  const fetched = await fetchInviteByCode(String(code))
-  if (fetched.success) {
-    if (fetched.invite.game_id !== STARTER_GAME_ID) {
-      inviteError.value = 'Ce code n’est valable que pour un autre jeu.'
+function onInviteEnded(next) {
+  applyInvite(next || null)
+}
+
+async function restoreSession() {
+  if (route.query.code) {
+    const joined = await joinInvite(String(route.query.code), STARTER_GAME_ID)
+    if (joined.success) {
+      applyInvite(joined.invite, { skipAdvance: true })
+      inviteError.value = ''
       return
     }
-    invite.value = fetched.invite
+    const fetched = await fetchInviteByCode(String(route.query.code))
+    if (fetched.success) {
+      if (fetched.invite.game_id !== STARTER_GAME_ID) {
+        inviteError.value = 'Ce code n’est valable que pour un autre jeu.'
+        return
+      }
+      applyInvite(fetched.invite, { skipAdvance: true })
+      inviteError.value = ''
+      return
+    }
+  }
+
+  const active = await fetchActiveInviteForDevice(STARTER_GAME_ID)
+  if (active.success && active.invite) {
+    applyInvite(active.invite, { skipAdvance: true })
     inviteError.value = ''
     return
   }
-  inviteError.value = joined.message || fetched.message
-}
 
+  if (route.query.code) {
+    inviteError.value = 'Cette partie n’est plus disponible. Tu peux en lancer une nouvelle.'
+  }
 function scheduleSearch(value) {
   window.clearTimeout(searchTimer)
   if (!value.trim()) {
@@ -226,6 +453,11 @@ function scheduleSearch(value) {
 
 watch(query, (value) => {
   if (skipNextSearch) {
+watch(invite, (next) => {
+  if (next && isActiveGame(next)) rememberGameSession(STARTER_GAME_ID, next)
+  else forgetGameSession(STARTER_GAME_ID)
+})
+
     skipNextSearch = false
     return
   }
@@ -234,6 +466,36 @@ watch(query, (value) => {
 
 async function selectPokemon(entry) {
   loadingDetails.value = true
+watch(
+  detailsNeeded,
+  async (ids) => {
+    const missing = ids.filter((id) => !detailsById.value[id])
+    if (!missing.length) return
+    const loaded = await Promise.all(
+      missing.map(async (id) => {
+        try {
+          return [id, await getPokemonDetails(id)]
+        } catch {
+          return null
+        }
+      }),
+    )
+    const next = { ...detailsById.value }
+    for (const entry of loaded) {
+      if (entry) next[entry[0]] = entry[1]
+    }
+    detailsById.value = next
+  },
+  { immediate: true },
+)
+
+watch(
+  () => gameState.value.round,
+  () => {
+    resetLieSearch()
+  },
+)
+
   detailsError.value = ''
   suggestions.value = []
   skipNextSearch = true
@@ -262,6 +524,7 @@ async function onSubmit() {
 onMounted(async () => {
   try {
     pokedex.value = await loadPokedexIndex()
+  await purgeExpiredInvites()
     indexReady.value = true
     fillFrenchNames()
   } catch {
@@ -271,7 +534,7 @@ onMounted(async () => {
 
   await restoreInviteFromQuery()
   if (localPlayerName(invite.value)) {
-    enteredName.value = localPlayerName(invite.value)
+  await restoreSession()
     nameDraft.value = enteredName.value
   }
   await maybeHostAdvance(invite.value)
@@ -292,13 +555,17 @@ onUnmounted(() => {
       </div>
       <InviteFriendMenu
         :game-id="STARTER_GAME_ID"
-        :invite="invite"
-        :extra="inviteExtra"
-        @invite-created="onInviteCreated"
-        @invite-updated="onInviteUpdated"
-      />
-    </header>
-
+      <div class="game-bar__actions">
+        <MatchHistoryMenu :game-id="STARTER_GAME_ID" />
+        <InviteFriendMenu
+          :game-id="STARTER_GAME_ID"
+          :invite="invite"
+          :extra="inviteExtra"
+          @invite-created="onInviteCreated"
+          @invite-updated="onInviteUpdated"
+          @invite-ended="onInviteEnded"
+        />
+      </div>
     <p v-if="friendName" class="friend-banner friend-banner--ok">
       Ami connecté : <strong>{{ friendName }}</strong>
     </p>
@@ -311,6 +578,7 @@ onUnmounted(() => {
     <p v-else-if="inviteError" class="friend-banner friend-banner--error">{{ inviteError }}</p>
     <p v-if="startersError" class="friend-banner friend-banner--error">{{ startersError }}</p>
 
+    <p v-if="endedNotice" class="friend-banner">{{ endedNotice }}</p>
     <section v-if="!mySavedName" class="name-card" aria-labelledby="name-title">
       <h3 id="name-title">Ton nom</h3>
       <p class="dex-desc">Il s’affichera chez ton ami comme joueur connecté.</p>
@@ -336,16 +604,80 @@ onUnmounted(() => {
 
     <StarterDraw
       v-if="showDraw"
+    <InfoFlagsPanel
+      v-if="showFlags"
+      :flags="infoFlags"
+      :editable="flagsEditable"
+      @toggle="onToggleFlag"
+    >
+      <template v-if="infoPhase" #footer>
+        <button
+          v-if="flagsEditable"
+          type="button"
+          class="start-btn"
+          :disabled="savingStart"
+          @click="confirmInfo"
+        >
+          {{ savingStart ? 'Lancement…' : 'Lancer les 6 manches' }}
+        </button>
+        <p v-else class="flags-wait">
+          L’hôte choisit les infos, puis lance les Pokémon. Tu ne les vois pas encore.
+        </p>
+      </template>
+    </InfoFlagsPanel>
+
+    <StarterDraw
+      v-if="showDraw"
       :pokemon="myProposals"
-      :friend-name="friendName"
-      :round="gameState.round"
+      :details-by-id="detailsById"
+      :flags="infoFlags"
       :picked-id="myPick"
       :waiting="Boolean(myPick) && !theirPick"
       :disabled="savingPick"
       @pick="pickForFriend"
-    />
-    <p v-else-if="dealing" class="friend-banner">Préparation de la manche…</p>
-
+      :disabled="savingPick || savingLie"
+      :lie="myLie"
+      :lie-under-id="myLieUnderId"
+      :searching-lie="lieSearchOpen"
+      :assigning-lie="assigningLie"
+      @pick="pickForFriend"
+      @start-lie="startLieSearch"
+      @place-lie="placeLie"
+    >
+      <template #lie-search>
+        <p class="dex-desc">Cherche un Pokémon différent des 3 propositions, puis choisis-le comme mensonge.</p>
+        <form class="search" @submit.prevent="onSubmit">
+          <label class="sr-only" for="pokemon-search">Rechercher un Pokémon</label>
+          <input
+            id="pokemon-search"
+            v-model="query"
+            type="search"
+            placeholder="Dracaufeu, Pikachu, 25…"
+            autocomplete="off"
+          />
+          <button type="submit">Chercher</button>
+        </form>
+        <p v-if="searching" class="hint">Recherche…</p>
+        <ul v-if="suggestions.length" class="suggestions">
+          <li v-for="item in suggestions" :key="item.id">
+            <button type="button" @click="selectPokemon(item)">
+              <span class="num">#{{ String(item.id).padStart(4, '0') }}</span>
+              <span>{{ item.fr || item.en }}</span>
+            </button>
+          </li>
+        </ul>
+        <p v-if="lieError || detailsError" class="error">{{ lieError || detailsError }}</p>
+        <p v-else-if="loadingDetails" class="hint">Chargement de la fiche…</p>
+        <div v-if="selected && !loadingDetails" class="lie-choice">
+          <div class="pick-preview">
+            <img :src="starterArtworkUrl(selected.id)" alt="" />
+            <PokemonPreviewInfo :pokemon="selected" :flags="infoFlags" />
+          </div>
+          <button type="button" class="lie-confirm" @click="chooseAsLie">Choisir comme mensonge</button>
+        </div>
+        <button type="button" class="lie-cancel" @click="resetLieSearch">Annuler</button>
+      </template>
+    </StarterDraw>
     <section v-if="gameOver" class="draw-result" aria-labelledby="teams-title">
       <h3 id="teams-title">Les 6 Pokémon choisis</h3>
       <p class="dex-desc">Seules ces équipes sont conservées.</p>
@@ -373,7 +705,7 @@ onUnmounted(() => {
 
     <section class="dex" aria-labelledby="dex-title">
       <h3 id="dex-title">Pokédex</h3>
-      <p class="dex-desc">
+    <section v-if="!showDraw" class="dex" aria-labelledby="dex-title">
         Recherche n’importe quel Pokémon par nom français, nom anglais ou numéro.
       </p>
 
@@ -429,6 +761,13 @@ onUnmounted(() => {
 
 .eyebrow {
   margin: 0;
+.game-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-shrink: 0;
+}
+
   font-size: 0.72rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -554,6 +893,9 @@ h3 {
 
 .search button {
   border: none;
+.search button,
+.start-btn {
+  border: none;
   border-radius: 12px;
   min-height: 44px;
   padding: 0 1rem;
@@ -562,6 +904,14 @@ h3 {
   font-weight: 700;
 }
 
+.start-btn {
+  width: 100%;
+}
+
+.flags-wait {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 0.92rem;
 .hint {
   margin: 0.55rem 0 0;
   font-size: 0.88rem;
@@ -601,6 +951,46 @@ h3 {
 
 .sr-only {
   position: absolute;
+.lie-choice {
+  margin-top: 0.75rem;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.pick-preview {
+  background: var(--surface-muted);
+  border-radius: 16px;
+  padding: 0.7rem 0.7rem 0.85rem;
+  text-align: left;
+}
+
+.pick-preview img {
+  display: block;
+  margin: 0 auto;
+  max-height: 110px;
+}
+
+.lie-confirm,
+.lie-cancel {
+  width: 100%;
+  border: none;
+  border-radius: 12px;
+  min-height: 44px;
+  padding: 0 1rem;
+  font-weight: 700;
+}
+
+.lie-confirm {
+  background: color-mix(in srgb, #8a3d32 86%, var(--ink));
+  color: var(--cream);
+}
+
+.lie-cancel {
+  margin-top: 0.45rem;
+  background: var(--surface-muted);
+  color: var(--ink);
+}
+
   width: 1px;
   height: 1px;
   overflow: hidden;

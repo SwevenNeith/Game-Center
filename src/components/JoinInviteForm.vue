@@ -35,7 +35,7 @@ async function onJoin() {
 
 <template>
   <section class="join-card" aria-labelledby="join-title">
-    <p class="eyebrow">Partie en cours</p>
+      <p class="eyebrow">Invitation</p>
     <h2 id="join-title">Entrer un code</h2>
     <p class="join-card__desc">
       Un ami t’a invité ? Saisis son code (valable 5 minutes) pour rejoindre sa partie.
