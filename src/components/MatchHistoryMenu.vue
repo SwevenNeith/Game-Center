@@ -51,7 +51,7 @@ async function rerunCombat(match) {
   runningId.value = match.id
   progressById.value = {
     ...progressById.value,
-    [match.id]: { status: 'running', played: 0, progress: 0, maxBattles: 300 },
+    [match.id]: { status: 'running', played: 0, progress: 0, minBattles: 40, maxBattles: 300 },
   }
   const nextResults = { ...resultsById.value }
   delete nextResults[match.id]

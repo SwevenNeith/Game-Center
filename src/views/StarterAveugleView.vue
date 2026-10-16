@@ -45,6 +45,7 @@ import {
   loadTypeChart,
   makeSeed,
   runBattleCampaign,
+  warmupBattleWorker,
 } from '../services/battle/index.js'
 import {
   bothFinalsChosen,
@@ -618,6 +619,13 @@ watch(
   () => gameState.value.round,
   () => {
     resetLieSearch()
+  },
+)
+
+watch(
+  () => previewing.value || battling.value,
+  (active) => {
+    if (active) warmupBattleWorker()
   },
 )
 

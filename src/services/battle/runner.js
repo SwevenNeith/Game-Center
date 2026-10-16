@@ -7,6 +7,15 @@ export function isCampaignRunning() {
   return campaignBusy
 }
 
+export function warmupBattleWorker() {
+  const host = ensureWorker()
+  try {
+    host?.postMessage({ type: 'ping' })
+  } catch {
+    // le worker se chargera au premier combat
+  }
+}
+
 function ensureWorker() {
   if (worker) return worker
   if (typeof Worker === 'undefined') return null

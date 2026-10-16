@@ -20,10 +20,14 @@ function verdictLabel(verdict, hostName, guestName) {
 }
 
 const barPct = computed(() => {
-  const max = Number(props.battle?.maxBattles) || 300
   const played = Number(props.battle?.played) || 0
   if (props.battle?.progress != null) return Math.min(100, Number(props.battle.progress))
-  return Math.min(100, Math.round((played / max) * 100))
+  const min = Number(props.battle?.minBattles) || 40
+  const max = Number(props.battle?.maxBattles) || 300
+  if (played <= 0) return 0
+  if (played < min) return Math.round((played / min) * 85)
+  if (played >= max) return 100
+  return Math.min(99, Math.round(85 + ((played - min) / (max - min)) * 14))
 })
 </script>
 
@@ -33,10 +37,10 @@ const barPct = computed(() => {
     <div v-if="running" class="wait" role="status" aria-live="polite">
       <span class="spinner" aria-hidden="true"></span>
       <p class="hint">
-        Simulations en cours…
-        {{ battle.played || 0 }}
-        <template v-if="battle.maxBattles"> / {{ battle.maxBattles }}</template>
-        matchs
+        Simulations en cours… {{ battle.played || 0 }} matchs
+        <span v-if="battle.minBattles" class="sub">
+          (min. {{ battle.minBattles }} · max. {{ battle.maxBattles || 300 }})
+        </span>
       </p>
       <div
         class="bar"
@@ -133,6 +137,13 @@ const barPct = computed(() => {
 .wait .hint {
   margin: 0;
   text-align: center;
+}
+
+.sub {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--text-soft);
 }
 
 .spinner {

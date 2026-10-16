@@ -7,9 +7,9 @@ export const IV_EACH = 31
 export const MIN_BATTLES = 40
 export const MAX_BATTLES = 300
 export const BATCH_SIZE = 20
-/** Combats simultanés dans le worker (plus = plus rapide, plus de CPU). */
-export const SIM_CONCURRENCY = 8
-export const MAX_TURNS = 300
+/** Fréquence de yield UI (1 combat synchrone à la fois : plus rapide qu’en parallèle sur un thread). */
+export const SIM_CONCURRENCY = 1
+export const MAX_TURNS = 80
 export const WILSON_Z = 1.96
 
 /** Probabilité que le 4e slot soit un soutien si un bon soutien existe. */

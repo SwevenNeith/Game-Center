@@ -102,30 +102,37 @@ h3 {
   list-style: none;
   margin: 0.75rem 0 0;
   padding: 0;
-  display: flex;
-  gap: 0.4rem;
-  overflow-x: auto;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.2rem;
+  overflow: hidden;
 }
 
 .evo-slot {
-  flex: 1 1 0;
-  min-width: 72px;
+  min-width: 0;
   display: grid;
   justify-items: center;
-  gap: 0.2rem;
+  gap: 0.15rem;
   text-align: center;
 }
 
 .evo-slot > img {
-  width: 56px;
-  height: 56px;
+  width: 100%;
+  max-width: 48px;
+  height: 48px;
   object-fit: contain;
 }
 
 .name {
-  font-size: 0.72rem;
+  font-size: 0.62rem;
   font-weight: 700;
   line-height: 1.15;
+  max-width: 100%;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
 }
 
 .pending {
@@ -141,8 +148,8 @@ h3 {
 }
 
 .evo-card {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -159,5 +166,34 @@ h3 {
 .evo-card--on {
   outline: 2px solid var(--teal);
   background: color-mix(in srgb, var(--teal) 16%, var(--surface));
+}
+
+@media (max-width: 720px) {
+  .evo {
+    padding: 0.7rem 0.5rem 0.8rem;
+    border-radius: 16px;
+  }
+
+  .dex-desc {
+    font-size: 0.8rem;
+  }
+
+  .evo-row {
+    gap: 0.12rem;
+  }
+
+  .evo-slot > img {
+    max-width: 40px;
+    height: 40px;
+  }
+
+  .name {
+    font-size: 0.55rem;
+  }
+
+  .evo-card {
+    width: 18px;
+    height: 18px;
+  }
 }
 </style>

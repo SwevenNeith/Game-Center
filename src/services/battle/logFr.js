@@ -19,7 +19,7 @@ function moveName(sets, move, ident) {
   return move
 }
 
-export function parseBattleLog(rawLog, { hostSets, guestSets } = {}) {
+export function parseBattleLog(rawLog, { hostSets, guestSets, keepEvents = true } = {}) {
   const lines = String(rawLog || '').split('\n')
   const events = []
   const hostStats = (hostSets || []).map((set) => ({
@@ -65,23 +65,27 @@ export function parseBattleLog(rawLog, { hostSets, guestSets } = {}) {
       hp[ident] = Number(switchMatch[4])
       maxHp[ident] = Number(switchMatch[5])
       bump(side, species, 'sent')
-      const sets = side === 'p1' ? hostSets : guestSets
-      events.push({
-        kind: 'switch',
-        text: `${nameOf(sets, switchMatch[2], species)} entre en combat.`,
-        turn: turns,
-      })
+      if (keepEvents) {
+        const sets = side === 'p1' ? hostSets : guestSets
+        events.push({
+          kind: 'switch',
+          text: `${nameOf(sets, switchMatch[2], species)} entre en combat.`,
+          turn: turns,
+        })
+      }
       continue
     }
     const moveMatch = line.match(/\|move\|(p[12])a: ([^|]+)\|([^|]+)\|?(.*)?/)
     if (moveMatch) {
       lastAttacker = { side: moveMatch[1], ident: moveMatch[2], move: moveMatch[3] }
-      const sets = moveMatch[1] === 'p1' ? hostSets : guestSets
-      events.push({
-        kind: 'move',
-        text: `${nameOf(sets, moveMatch[2])} utilise ${moveName(sets, moveMatch[3], moveMatch[2])}.`,
-        turn: turns,
-      })
+      if (keepEvents) {
+        const sets = moveMatch[1] === 'p1' ? hostSets : guestSets
+        events.push({
+          kind: 'move',
+          text: `${nameOf(sets, moveMatch[2])} utilise ${moveName(sets, moveMatch[3], moveMatch[2])}.`,
+          turn: turns,
+        })
+      }
       continue
     }
     const dmg = line.match(/\|-damage\|(p[12])a: ([^|]+)\|(\d+)\/(\d+)/)
@@ -100,7 +104,7 @@ export function parseBattleLog(rawLog, { hostSets, guestSets } = {}) {
         bump(lastAttacker.side, species, 'damage', lost)
         void atkSets
       }
-      if (pct > 0) {
+      if (keepEvents && pct > 0) {
         events.push({
           kind: 'damage',
           text: `  → ${pct} % des PV.`,
@@ -111,12 +115,14 @@ export function parseBattleLog(rawLog, { hostSets, guestSets } = {}) {
     }
     const faint = line.match(/\|faint\|(p[12])a: ([^|]+)/)
     if (faint) {
-      const sets = faint[1] === 'p1' ? hostSets : guestSets
-      events.push({
-        kind: 'faint',
-        text: `${nameOf(sets, faint[2])} est K.O.`,
-        turn: turns,
-      })
+      if (keepEvents) {
+        const sets = faint[1] === 'p1' ? hostSets : guestSets
+        events.push({
+          kind: 'faint',
+          text: `${nameOf(sets, faint[2])} est K.O.`,
+          turn: turns,
+        })
+      }
       if (lastAttacker && lastAttacker.side !== faint[1]) {
         bump(lastAttacker.side, String(lastAttacker.ident).split(': ').pop(), 'kos')
       }
@@ -126,11 +132,11 @@ export function parseBattleLog(rawLog, { hostSets, guestSets } = {}) {
     if (win) {
       const name = win[1].trim()
       winner = name === 'host' || /hôte|hote/i.test(name) ? 'host' : name === 'guest' || /invit/i.test(name) ? 'guest' : name
-      events.push({ kind: 'win', text: `Vainqueur : ${name}.`, turn: turns })
+      if (keepEvents) events.push({ kind: 'win', text: `Vainqueur : ${name}.`, turn: turns })
     }
     if (line.includes('|tie|') || line.includes('|tie')) {
       winner = 'tie'
-      events.push({ kind: 'win', text: 'Match nul.', turn: turns })
+      if (keepEvents) events.push({ kind: 'win', text: 'Match nul.', turn: turns })
     }
   }
 

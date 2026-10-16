@@ -1,5 +1,5 @@
-import { BattleStreams, PRNG } from '@pkmn/sim'
-import { SmartPlayer } from './ai.js'
+import { Battle, PRNG } from '@pkmn/sim'
+import { pickAction } from './ai.js'
 import { FORMAT_ID, MAX_BATTLES, MAX_TURNS, MIN_BATTLES, SIM_CONCURRENCY } from './config.js'
 import { frenchRecap, parseBattleLog } from './logFr.js'
 import {
@@ -10,7 +10,7 @@ import {
   verdictOf,
   wilsonInterval,
 } from './results.js'
-import { sanitizeSetForSim, Teams, toPackedTeam } from './showdownIds.js'
+import { sanitizeSetForSim, Teams, toID, toPackedTeam } from './showdownIds.js'
 
 function seedFor(base, index) {
   if (Array.isArray(base) && base.length >= 4) {
@@ -31,6 +31,56 @@ function prepareTeams(hostSets, guestSets) {
   return { p1sets, p2sets, packed1, packed2 }
 }
 
+function setBySpecies(sets, species) {
+  const id = toID(species)
+  if (!id) return sets?.[0] || null
+  return (
+    (sets || []).find((set) => toID(set.species) === id) ||
+    (sets || []).find((set) => toID(set.slug) === id) ||
+    sets?.[0] ||
+    null
+  )
+}
+
+function pickForSide(side, ctx, ai) {
+  const request = side.activeRequest
+  if (!request || request.wait) return ''
+  const foe = side.foe?.active?.[0]
+  const species = foe?.species?.name || foe?.set?.species || ''
+  const choice = pickAction(request, {
+    mySets: ctx.mySets,
+    theirSets: ctx.theirSets,
+    typeChart: ctx.typeChart,
+    foe: foe
+      ? { hp: foe.hp, max: foe.maxhp || 1, status: String(foe.status || ''), species }
+      : { hp: 1, max: 1, status: '', species: '' },
+    foeSet: setBySpecies(ctx.theirSets, species),
+    switchesInRow: ai.switchesInRow,
+    lastProtectTurn: ai.lastProtectTurn,
+    turn: side.battle?.turn || 0,
+  })
+  if (!choice) return 'default'
+  if (choice.startsWith('switch')) ai.switchesInRow += 1
+  else ai.switchesInRow = 0
+  return choice
+}
+
+function advanceBattle(battle, c1, c2) {
+  try {
+    battle.makeChoices(c1, c2)
+    return true
+  } catch {
+    try {
+      battle.p1.clearChoice()
+      battle.p2.clearChoice()
+      battle.makeChoices()
+      return true
+    } catch {
+      return false
+    }
+  }
+}
+
 export async function runOneBattle({
   hostSets,
   guestSets,
@@ -39,64 +89,63 @@ export async function runOneBattle({
   seed,
   typeChart,
   prepared,
+  wantRecap = true,
 }) {
   const teams = prepared || prepareTeams(hostSets, guestSets)
   const { p1sets, p2sets, packed1, packed2 } = teams
-
-  const stream = new BattleStreams.BattleStream({ keepAlive: false })
-  const streams = BattleStreams.getPlayerStreams(stream)
-  const p1 = new SmartPlayer(streams.p1, {
-    mySets: p1sets,
-    theirSets: p2sets,
-    typeChart,
-    sideId: 'p1',
+  const battle = new Battle({
+    formatid: FORMAT_ID,
+    seed: Array.isArray(seed) ? seed : seedFor(seed, 0),
+    p1: { name: hostName, team: packed1 },
+    p2: { name: guestName, team: packed2 },
   })
-  const p2 = new SmartPlayer(streams.p2, {
-    mySets: p2sets,
-    theirSets: p1sets,
-    typeChart,
-    sideId: 'p2',
-  })
-  void p1.start()
-  void p2.start()
 
-  const spec = { formatid: FORMAT_ID, seed: Array.isArray(seed) ? seed : seedFor(seed, 0) }
-  const chunks = []
-  await streams.omniscient.write(
-    `>start ${JSON.stringify(spec)}\n>player p1 ${JSON.stringify({ name: hostName, team: packed1 })}\n>player p2 ${JSON.stringify({ name: guestName, team: packed2 })}`,
-  )
+  const p1ai = { switchesInRow: 0, lastProtectTurn: -1 }
+  const p2ai = { switchesInRow: 0, lastProtectTurn: -1 }
+  const hostCtx = { mySets: p1sets, theirSets: p2sets, typeChart }
+  const guestCtx = { mySets: p2sets, theirSets: p1sets, typeChart }
+  const maxSteps = MAX_TURNS * 4 + 20
 
-  for await (const chunk of streams.omniscient) {
-    chunks.push(chunk)
-    if (chunk.includes('|turn|')) {
-      const turns = chunk.match(/\|turn\|(\d+)/g)
-      if (turns) {
-        const turn = Number(turns[turns.length - 1].slice(6))
-        if (turn >= MAX_TURNS) await streams.omniscient.write('>forcetie')
+  try {
+    for (let step = 0; step < maxSteps && !battle.ended; step += 1) {
+      if (battle.turn >= MAX_TURNS) {
+        battle.forceWin()
+        break
+      }
+      const ok = advanceBattle(
+        battle,
+        pickForSide(battle.p1, hostCtx, p1ai),
+        pickForSide(battle.p2, guestCtx, p2ai),
+      )
+      if (!ok) {
+        battle.forceWin()
+        break
       }
     }
-    if (chunk.includes('|win|') || chunk.includes('|tie|')) break
-  }
+    if (!battle.ended) battle.forceWin()
 
-  const log = chunks.join('\n')
-  const parsed = parseBattleLog(log, { hostSets: p1sets, guestSets: p2sets })
-  let winner = parsed.winner
-  if (winner === hostName) winner = 'host'
-  if (winner === guestName) winner = 'guest'
-  if (winner !== 'host' && winner !== 'guest') {
-    if (log.includes(`|win|${hostName}`)) winner = 'host'
-    else if (log.includes(`|win|${guestName}`)) winner = 'guest'
-    else winner = 'tie'
-  }
+    const log = battle.getDebugLog()
+    const parsed = parseBattleLog(log, { hostSets: p1sets, guestSets: p2sets, keepEvents: wantRecap })
+    let winner = parsed.winner
+    if (winner === hostName) winner = 'host'
+    if (winner === guestName) winner = 'guest'
+    if (winner !== 'host' && winner !== 'guest') {
+      if (battle.winner === hostName) winner = 'host'
+      else if (battle.winner === guestName) winner = 'guest'
+      else winner = 'tie'
+    }
 
-  return {
-    winner,
-    turns: parsed.turns,
-    hostStats: parsed.hostStats,
-    guestStats: parsed.guestStats,
-    remainingHpHost: parsed.remainingHpHost,
-    remainingHpGuest: parsed.remainingHpGuest,
-    recap: frenchRecap(parsed),
+    return {
+      winner,
+      turns: parsed.turns || battle.turn || 0,
+      hostStats: parsed.hostStats,
+      guestStats: parsed.guestStats,
+      remainingHpHost: parsed.remainingHpHost,
+      remainingHpGuest: parsed.remainingHpGuest,
+      recap: wantRecap ? frenchRecap(parsed) : [],
+    }
+  } finally {
+    battle.destroy()
   }
 }
 
@@ -122,7 +171,14 @@ export async function runSimulations(options, onProgress) {
   const hostStats = []
   const guestStats = []
   let recaps = {}
-  const waveSize = Math.max(1, Number(concurrency) || SIM_CONCURRENCY)
+  const yieldEvery = Math.max(1, Number(concurrency) || 1)
+
+  const progressPct = () => {
+    if (played <= 0) return 0
+    if (played < minBattles) return Math.round((played / minBattles) * 85)
+    if (played >= maxBattles) return 100
+    return Math.min(99, Math.round(85 + ((played - minBattles) / (maxBattles - minBattles)) * 14))
+  }
 
   const emitProgress = () => {
     const decisive = hostWins + guestWins
@@ -134,37 +190,37 @@ export async function runSimulations(options, onProgress) {
       interval: wilsonInterval(hostWins, decisive),
       minBattles,
       maxBattles,
-      progress: Math.min(100, Math.round((played / maxBattles) * 100)),
+      progress: progressPct(),
     })
   }
 
-  while (played < maxBattles) {
-    const remaining = Math.min(waveSize, maxBattles - played)
-    const jobs = Array.from({ length: remaining }, (_, offset) =>
-      runOneBattle({
-        hostSets,
-        guestSets,
-        hostName,
-        guestName,
-        seed: seedFor(seed, played + offset),
-        typeChart,
-        prepared,
-      }),
-    )
-    const battles = await Promise.all(jobs)
-    for (const battle of battles) {
-      played += 1
-      turnSum += battle.turns || 0
-      if (battle.winner === 'host') hostWins += 1
-      else if (battle.winner === 'guest') guestWins += 1
-      else ties += 1
-      mergePokemonStats(hostStats, battle.hostStats)
-      mergePokemonStats(guestStats, battle.guestStats)
-      recaps = keepRecaps(recaps, battle)
-      emitProgress()
-    }
+  emitProgress()
+  await Promise.resolve()
+
+  for (let index = 0; index < maxBattles; index += 1) {
+    const wantRecap = !recaps.hostWin || !recaps.guestWin || !recaps.closest
+    const battle = await runOneBattle({
+      hostSets,
+      guestSets,
+      hostName,
+      guestName,
+      seed: seedFor(seed, index),
+      typeChart,
+      prepared,
+      wantRecap,
+    })
+    played += 1
+    turnSum += battle.turns || 0
+    if (battle.winner === 'host') hostWins += 1
+    else if (battle.winner === 'guest') guestWins += 1
+    else ties += 1
+    mergePokemonStats(hostStats, battle.hostStats)
+    mergePokemonStats(guestStats, battle.guestStats)
+    recaps = keepRecaps(recaps, battle)
+    emitProgress()
     const decisive = hostWins + guestWins
     if (shouldStop(hostWins, guestWins, decisive, { minBattles, maxBattles })) break
+    if (index % yieldEvery === 0) await Promise.resolve()
   }
 
   const decisive = hostWins + guestWins

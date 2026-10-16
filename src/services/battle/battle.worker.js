@@ -8,6 +8,10 @@ import { runSimulations } from './simulate.js'
 
 self.onmessage = async (event) => {
   const { type, payload, id } = event.data || {}
+  if (type === 'ping') {
+    self.postMessage({ type: 'ready' })
+    return
+  }
   if (type !== 'run') return
   try {
     const result = await runSimulations(payload, (progress) => {

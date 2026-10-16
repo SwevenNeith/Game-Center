@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { runOneBattle } from './simulate.js'
+import { runOneBattle, runSimulations } from './simulate.js'
 
 function fakeSet(species, types, moves, ability = 'Blaze') {
   return {
@@ -55,5 +55,49 @@ describe('simulation complète', () => {
     assert.ok(['host', 'guest', 'tie'].includes(battle.winner))
     assert.ok(battle.turns > 0)
     assert.ok(battle.recap.length > 3)
+  })
+
+  it('enchaîne 40 combats 6v6 en quelques secondes', async () => {
+    const typeChart = {
+      fire: { double: ['grass'], half: ['fire', 'water'], none: [] },
+      water: { double: ['fire'], half: ['water', 'grass'], none: [] },
+      grass: { double: ['water'], half: ['grass', 'fire'], none: [] },
+      flying: { double: ['grass'], half: ['electric'], none: [] },
+      electric: { double: ['water', 'flying'], half: ['electric', 'grass'], none: [] },
+      ghost: { double: ['ghost'], half: [], none: [] },
+      poison: { double: ['grass'], half: ['poison'], none: [] },
+      normal: { double: [], half: [], none: ['ghost'] },
+    }
+    const host = [
+      fakeSet('Raichu', ['electric'], ['thunderbolt', 'volt-switch', 'surf', 'protect'], 'Static'),
+      fakeSet('Charizard', ['fire', 'flying'], ['flamethrower', 'air-slash', 'dragon-pulse', 'earthquake'], 'Blaze'),
+      fakeSet('Gengar', ['ghost', 'poison'], ['shadow-ball', 'sludge-bomb', 'focus-blast', 'protect'], 'Cursed Body'),
+      fakeSet('Snorlax', ['normal'], ['body-slam', 'earthquake', 'crunch', 'rest'], 'Thick Fat'),
+      fakeSet('Dragonite', ['dragon', 'flying'], ['outrage', 'earthquake', 'fire-punch', 'extreme-speed'], 'Multiscale'),
+      fakeSet('Togekiss', ['fairy', 'flying'], ['air-slash', 'moonblast', 'flamethrower', 'roost'], 'Serene Grace'),
+    ]
+    const guest = [
+      fakeSet('Blastoise', ['water'], ['surf', 'ice-beam', 'flash-cannon', 'protect'], 'Torrent'),
+      fakeSet('Venusaur', ['grass', 'poison'], ['giga-drain', 'sludge-bomb', 'earthquake', 'protect'], 'Overgrow'),
+      fakeSet('Tyranitar', ['rock', 'dark'], ['stone-edge', 'crunch', 'earthquake', 'ice-punch'], 'Sand Stream'),
+      fakeSet('Garchomp', ['dragon', 'ground'], ['outrage', 'earthquake', 'stone-edge', 'fire-fang'], 'Rough Skin'),
+      fakeSet('Scizor', ['bug', 'steel'], ['bullet-punch', 'u-turn', 'knock-off', 'swords-dance'], 'Technician'),
+      fakeSet('Jellicent', ['water', 'ghost'], ['scald', 'shadow-ball', 'recover', 'will-o-wisp'], 'Water Absorb'),
+    ]
+    const started = Date.now()
+    const result = await runSimulations({
+      hostSets: host,
+      guestSets: guest,
+      hostName: 'host',
+      guestName: 'guest',
+      seed: [1, 2, 3, 4],
+      typeChart,
+      minBattles: 40,
+      maxBattles: 40,
+    })
+    const elapsed = Date.now() - started
+    assert.equal(result.played, 40)
+    assert.equal(result.hostWins + result.guestWins + result.ties, 40)
+    assert.ok(elapsed < 20000, `40 combats ont pris ${elapsed} ms`)
   })
 })

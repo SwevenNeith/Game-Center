@@ -1,6 +1,6 @@
 export { getFinalEvolutions, getFinalsForTeam } from './evolutions.js'
 export { generateSet, generateTeamSets } from './sets.js'
 export { loadTypeChart } from './typeMatchup.js'
-export { runBattleCampaign } from './runner.js'
+export { runBattleCampaign, warmupBattleWorker } from './runner.js'
 export { replaySavedTeams, resolveTeamForDisplay } from './replay.js'
 export { makeSeed, FOG_OF_WAR, SUPPORT_SLOT_CHANCE, MIN_BATTLES, MAX_BATTLES, BATCH_SIZE } from './config.js'
