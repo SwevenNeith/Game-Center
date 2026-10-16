@@ -1,4 +1,5 @@
 <script setup>
+import { playingCryUrl, toggleCry } from '../services/cryPlayer.js'
 import { STAT_LABELS } from '../services/pokeapi.js'
 import { INFO_FIELDS } from '../services/starterAveugle.js'
 
@@ -37,6 +38,12 @@ function rarityText(pokemon) {
       <span class="k">{{ labels.englishName }}</span>
       <span>{{ pokemon.englishName }}</span>
     </p>
+    <div v-if="flags.cry && pokemon.cry" class="fact">
+      <span class="k">{{ labels.cry }}</span>
+      <button type="button" class="cry-btn" @click.stop="toggleCry(pokemon.cry)">
+        {{ playingCryUrl === pokemon.cry ? 'Stop' : 'Écouter' }}
+      </button>
+    </div>
     <p v-if="flags.genus && pokemon.genus" class="fact">
       <span class="k">{{ labels.genus }}</span>
       <span>{{ pokemon.genus }}</span>
@@ -230,5 +237,17 @@ function rarityText(pokemon) {
   display: flex;
   justify-content: space-between;
   gap: 0.4rem;
+}
+
+.cry-btn {
+  justify-self: start;
+  min-height: 36px;
+  padding: 0.2rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--teal) 16%, var(--surface));
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 800;
 }
 </style>

@@ -1,9 +1,10 @@
 <script setup>
+import { computed, ref, watch } from 'vue'
 import PokemonPreviewInfo from './PokemonPreviewInfo.vue'
 import { starterArtworkUrl } from '../services/pokeapi.js'
 import { TOTAL_ROUNDS } from '../services/starterAveugle.js'
 
-defineProps({
+const props = defineProps({
   pokemon: { type: Array, default: () => [] },
   detailsById: { type: Object, default: () => ({}) },
   flags: { type: Object, default: () => ({}) },
@@ -20,13 +21,41 @@ defineProps({
 })
 
 const emit = defineEmits(['pick', 'start-lie', 'place-lie'])
+const pendingId = ref(null)
 
-function onCardClick(id) {
-  emit('pick', id)
+watch(
+  () => props.pokemon.map((item) => item.id).join(','),
+  () => {
+    pendingId.value = null
+  },
+)
+
+watch(
+  () => props.pickedId,
+  (id) => {
+    pendingId.value = id ? Number(id) : null
+  },
+)
+
+const highlightedId = computed(() => Number(props.pickedId || pendingId.value || 0) || null)
+
+function canSelect() {
+  return !props.disabled && !props.waiting && !props.pickedId
 }
 
-function onPlace(id) {
-  emit('place-lie', id)
+function onCardClick(id, event) {
+  if (event?.target?.closest('button.cry-btn, button.confirm-btn, audio, a')) return
+  if (props.assigningLie) {
+    emit('place-lie', id)
+    return
+  }
+  if (!canSelect()) return
+  pendingId.value = id
+}
+
+function confirmPick(id) {
+  if (!canSelect()) return
+  emit('pick', id)
 }
 </script>
 
@@ -34,7 +63,10 @@ function onPlace(id) {
   <section class="draw" aria-labelledby="draw-title">
     <p class="draw-round">Manche {{ round }} / {{ TOTAL_ROUNDS }}</p>
     <h3 id="draw-title">Voici les propositions pour {{ friendName }}</h3>
-    <p class="draw-desc">Choisis-en un : il sera ajouté à son équipe. Sans méga, primo-forme ni Gigamax.</p>
+    <p class="draw-desc">
+      Touche un Pokémon, écoute-le si le cri est affiché, puis confirme :
+      <strong>Je prends celui-là</strong>. Sans méga, primo-forme ni Gigamax.
+    </p>
     <p v-if="assigningLie" class="draw-hint draw-hint--lie">
       Sélectionne l’un des 3 Pokémon : le mensonge s’affichera en dessous, en rouge. Tu ne pourras pas le choisir pour l’équipe.
     </p>
@@ -43,19 +75,27 @@ function onPlace(id) {
 
     <ul v-else class="draw-grid">
       <li v-for="item in pokemon" :key="item.id">
-        <button
-          type="button"
+        <article
           class="pick-card"
           :class="{
-            'pick-card--selected': pickedId === item.id,
+            'pick-card--selected': highlightedId === item.id,
             'pick-card--target': assigningLie,
+            'pick-card--locked': !assigningLie && (disabled || waiting || Boolean(pickedId)) && pickedId !== item.id,
           }"
-          :disabled="assigningLie ? false : disabled || waiting || Boolean(pickedId)"
-          @click="assigningLie ? onPlace(item.id) : onCardClick(item.id)"
+          @click="onCardClick(item.id, $event)"
         >
           <img :src="starterArtworkUrl(item.id)" alt="" />
           <PokemonPreviewInfo :pokemon="detailsById[item.id]" :flags="flags" />
-        </button>
+          <button
+            v-if="!assigningLie && !pickedId && pendingId === item.id"
+            type="button"
+            class="confirm-btn"
+            :disabled="disabled"
+            @click.stop="confirmPick(item.id)"
+          >
+            Je prends celui-là
+          </button>
+        </article>
 
         <article
           v-if="lie && lieUnderId === item.id"
@@ -133,7 +173,7 @@ h3 {
   padding: 0;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.7rem;
+  gap: 0.9rem;
 }
 
 .draw-grid li {
@@ -145,40 +185,58 @@ h3 {
 .pick-card {
   width: 100%;
   background: var(--surface-muted);
-  border: 2px solid transparent;
-  border-radius: 16px;
-  padding: 0.7rem 0.55rem 0.85rem;
+  border: 3px solid transparent;
+  border-radius: 20px;
+  padding: 0.95rem 0.7rem 1rem;
   text-align: center;
-  min-height: 44px;
+  min-height: 48px;
+  cursor: pointer;
 }
 
-.pick-card:hover:not(:disabled) {
+.pick-card:hover:not(.pick-card--locked) {
   border-color: color-mix(in srgb, var(--teal) 45%, var(--taupe));
 }
 
 .pick-card--selected {
   border-color: var(--teal);
   background: color-mix(in srgb, var(--teal) 12%, var(--surface));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 28%, transparent);
 }
 
 .pick-card--target {
   border-color: color-mix(in srgb, #8a3d32 55%, var(--taupe));
-  cursor: pointer;
 }
 
 .pick-card--lie {
   background: color-mix(in srgb, #8a3d32 12%, var(--surface));
   border-color: #8a3d32;
   cursor: default;
+  box-shadow: none;
 }
 
-.pick-card:disabled:not(.pick-card--selected) {
+.pick-card--locked {
   opacity: 0.55;
+  cursor: default;
 }
 
 .pick-card img {
   margin: 0 auto;
-  max-height: 110px;
+  width: min(100%, 180px);
+  height: 150px;
+  object-fit: contain;
+}
+
+.confirm-btn {
+  width: 100%;
+  margin-top: 0.75rem;
+  border: none;
+  border-radius: 14px;
+  min-height: 48px;
+  padding: 0.55rem 0.8rem;
+  background: var(--teal);
+  color: var(--cream);
+  font-size: 1rem;
+  font-weight: 800;
 }
 
 .lie-tag {
@@ -211,6 +269,21 @@ h3 {
 @media (max-width: 720px) {
   .draw-grid {
     grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .pick-card {
+    padding: 1.05rem 0.85rem 1.1rem;
+  }
+
+  .pick-card img {
+    width: min(100%, 220px);
+    height: 180px;
+  }
+
+  .confirm-btn {
+    min-height: 52px;
+    font-size: 1.05rem;
   }
 }
 </style>

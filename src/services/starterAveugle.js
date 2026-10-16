@@ -6,6 +6,7 @@ export const GAME_DURATION_MS = 90 * 60 * 1000
 export const INFO_FIELDS = [
   { id: 'number', label: 'Numéro' },
   { id: 'englishName', label: 'Nom anglais' },
+  { id: 'cry', label: 'Cri' },
   { id: 'genus', label: 'Catégorie' },
   { id: 'types', label: 'Types' },
   { id: 'evolutionStatus', label: 'Statut d’évolution' },
@@ -258,6 +259,7 @@ export function withFinalTeam(state, role, finalTeam) {
 export function withFinalChoice(state, role, index, choice) {
   const next = cloneState(state)
   const team = Array.from({ length: TOTAL_ROUNDS }, (_, slot) => next[role].finalTeam?.[slot] || null)
+  if (team[index]?.pokemonId) return next
   team[index] = choice
   next[role].finalTeam = team
   return next

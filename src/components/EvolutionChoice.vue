@@ -1,7 +1,8 @@
 <script setup>
+import { reactive, watch } from 'vue'
 import { starterArtworkUrl } from '../services/pokeapi.js'
 
-defineProps({
+const props = defineProps({
   title: { type: String, default: 'Ton équipe' },
   slots: { type: Array, default: () => [] },
   saving: { type: Boolean, default: false },
@@ -10,22 +11,63 @@ defineProps({
 })
 
 const emit = defineEmits(['choose'])
+const pendingByIndex = reactive({})
+
+watch(
+  () =>
+    props.slots.map((slot) => `${slot.index}:${slot.choice?.pokemonId || ''}:${(slot.options || []).length}`).join('|'),
+  () => {
+    for (const slot of props.slots) {
+      const pending = pendingByIndex[slot.index]
+      if (pending && pending.pokemonId === slot.choice?.pokemonId) delete pendingByIndex[slot.index]
+    }
+  },
+)
+
+function displayChoice(slot) {
+  return pendingByIndex[slot.index] || slot.choice || slot.options?.[0] || null
+}
 
 function displayName(slot) {
-  return slot.choice?.name || slot.options?.[0]?.name || slot.fromName || '…'
+  return displayChoice(slot)?.name || slot.fromName || '…'
 }
 
 function displayArt(slot) {
+  const choice = displayChoice(slot)
   return (
-    slot.choice?.artwork ||
-    slot.options?.find((option) => option.pokemonId === slot.choice?.pokemonId)?.artwork ||
+    choice?.artwork ||
+    slot.options?.find((option) => option.pokemonId === choice?.pokemonId)?.artwork ||
     slot.options?.[0]?.artwork ||
-    starterArtworkUrl(slot.choice?.pokemonId || slot.fromId)
+    starterArtworkUrl(choice?.pokemonId || slot.fromId)
   )
 }
 
 function canChoose(slot) {
-  return !slot.readonly && !slot.auto && !slot.locked && (slot.options || []).length > 1
+  if (props.readonly || slot.readonly || slot.auto || slot.locked) return false
+  if (slot.choice?.pokemonId) return false
+  return (slot.options || []).length > 1
+}
+
+function isOn(slot, option) {
+  const current = pendingByIndex[slot.index] || slot.choice
+  return current?.pokemonId === option.pokemonId
+}
+
+function selectOption(slot, option) {
+  if (!canChoose(slot) || props.saving) return
+  pendingByIndex[slot.index] = option
+}
+
+function canConfirm(slot) {
+  const pending = pendingByIndex[slot.index]
+  if (!pending || props.saving) return false
+  return pending.pokemonId !== slot.choice?.pokemonId
+}
+
+function confirmOption(slot) {
+  const option = pendingByIndex[slot.index]
+  if (!option || !canConfirm(slot)) return
+  emit('choose', slot.index, option)
 }
 </script>
 
@@ -33,7 +75,8 @@ function canChoose(slot) {
   <section class="evo" :aria-labelledby="title.replace(/\s+/g, '-').toLowerCase()">
     <h3>{{ title }}</h3>
     <p v-if="!readonly" class="dex-desc">
-      Une ligne, les formes finales. Un Pokémon déjà au dernier stade reste celui-là.
+      Une forme déjà finale reste celle-là. S’il y a plusieurs évolutions, le choix est
+      <strong>définitif</strong> : <strong>Je prends celui-là</strong> verrouille le Pokémon.
     </p>
     <p v-if="waitingFriend" class="hint">En attente des choix de ton ami…</p>
 
@@ -45,20 +88,31 @@ function canChoose(slot) {
           <img :src="displayArt(slot)" :alt="displayName(slot)" />
           <span class="name">{{ displayName(slot) }}</span>
           <small v-if="slot.pending" class="pending">Attente</small>
+          <small v-else-if="slot.choice?.pokemonId && !readonly" class="pending">Verrouillé</small>
           <div v-if="canChoose(slot)" class="evo-options">
             <button
               v-for="option in slot.options"
               :key="option.pokemonId"
               type="button"
               class="evo-card"
-              :class="{ 'evo-card--on': slot.choice?.pokemonId === option.pokemonId }"
+              :class="{ 'evo-card--on': isOn(slot, option) }"
               :disabled="saving"
               :title="option.name"
-              @click="emit('choose', slot.index, option)"
+              @click="selectOption(slot, option)"
             >
               <img :src="option.artwork || starterArtworkUrl(option.pokemonId)" :alt="option.name" />
+              <span>{{ option.name }}</span>
             </button>
           </div>
+          <button
+            v-if="canConfirm(slot)"
+            type="button"
+            class="confirm-btn"
+            :disabled="saving"
+            @click="confirmOption(slot)"
+          >
+            Je prends <span class="nobr">celui-là</span>
+          </button>
         </template>
       </li>
     </ul>
@@ -100,11 +154,11 @@ h3 {
 
 .evo-row {
   list-style: none;
-  margin: 0.75rem 0 0;
+  margin: 0.85rem 0 0;
   padding: 0;
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 0.2rem;
+  gap: 0.55rem;
   overflow: hidden;
 }
 
@@ -112,21 +166,22 @@ h3 {
   min-width: 0;
   display: grid;
   justify-items: center;
-  gap: 0.15rem;
+  align-content: start;
+  gap: 0.28rem;
   text-align: center;
 }
 
 .evo-slot > img {
   width: 100%;
-  max-width: 48px;
-  height: 48px;
+  max-width: 84px;
+  height: 84px;
   object-fit: contain;
 }
 
 .name {
-  font-size: 0.62rem;
-  font-weight: 700;
-  line-height: 1.15;
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.2;
   max-width: 100%;
   overflow: hidden;
   display: -webkit-box;
@@ -137,63 +192,114 @@ h3 {
 
 .pending {
   color: var(--text-soft);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
 }
 
 .evo-options {
   display: flex;
   justify-content: center;
-  gap: 0.18rem;
+  gap: 0.3rem;
   flex-wrap: wrap;
+  width: 100%;
 }
 
 .evo-card {
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  flex: 1 1 3.4rem;
+  min-width: 3.2rem;
+  max-width: 5.2rem;
+  min-height: 4.4rem;
+  padding: 0.25rem 0.2rem 0.35rem;
+  border: 2px solid var(--border);
+  border-radius: 12px;
   background: var(--surface-muted);
-  overflow: hidden;
+  display: grid;
+  justify-items: center;
+  gap: 0.12rem;
 }
 
 .evo-card img {
-  width: 100%;
-  height: 100%;
+  width: 44px;
+  height: 44px;
   object-fit: contain;
 }
 
+.evo-card span {
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 1.15;
+  max-width: 100%;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+
 .evo-card--on {
+  border-color: var(--teal);
   outline: 2px solid var(--teal);
   background: color-mix(in srgb, var(--teal) 16%, var(--surface));
 }
 
+.confirm-btn {
+  width: 100%;
+  margin-top: 0.15rem;
+  border: none;
+  border-radius: 10px;
+  min-height: 40px;
+  padding: 0.3rem 0.35rem;
+  background: var(--teal);
+  color: var(--cream);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.15;
+  hyphens: none;
+}
+
+.nobr {
+  white-space: nowrap;
+}
+
 @media (max-width: 720px) {
   .evo {
-    padding: 0.7rem 0.5rem 0.8rem;
+    padding: 0.85rem 0.6rem 0.95rem;
     border-radius: 16px;
   }
 
   .dex-desc {
-    font-size: 0.8rem;
+    font-size: 0.84rem;
   }
 
   .evo-row {
-    gap: 0.12rem;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.65rem 0.4rem;
   }
 
   .evo-slot > img {
-    max-width: 40px;
-    height: 40px;
+    max-width: 92px;
+    height: 92px;
   }
 
   .name {
-    font-size: 0.55rem;
+    font-size: 0.82rem;
   }
 
   .evo-card {
-    width: 18px;
-    height: 18px;
+    min-height: 4.6rem;
+  }
+
+  .evo-card img {
+    width: 48px;
+    height: 48px;
+  }
+
+  .evo-card span {
+    font-size: 0.68rem;
+  }
+
+  .confirm-btn {
+    min-height: 44px;
+    font-size: 0.78rem;
   }
 }
 </style>

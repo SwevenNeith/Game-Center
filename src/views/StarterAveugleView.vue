@@ -214,7 +214,9 @@ const evoSlots = computed(() =>
       fromName: item.fr || item.en,
       options: loaded?.options || [],
       auto: loaded?.auto || null,
-      locked: Boolean(loaded?.locked || ((loaded?.options || []).length <= 1 && loaded?.auto)),
+      locked: Boolean(
+        choice?.pokemonId || loaded?.locked || ((loaded?.options || []).length <= 1 && loaded?.auto),
+      ),
       choice,
       loading: !loaded,
       error: loaded?.error || '',
@@ -694,6 +696,7 @@ async function applyAutoEvolutions() {
 
 async function chooseEvolution(index, option) {
   if (!invite.value || !myRole.value || savingEvo.value) return
+  if (parseGameState(invite.value)[myRole.value]?.finalTeam?.[index]?.pokemonId) return
   const fromId = myTeam.value[index]?.id
   savingEvo.value = true
   const result = await updateInvite(invite.value.id, {

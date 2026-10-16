@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { completeRound, emptyGameState, startCombatState, TOTAL_ROUNDS } from '../starterAveugle.js'
+import {
+  completeRound,
+  emptyGameState,
+  startCombatState,
+  TOTAL_ROUNDS,
+  withFinalChoice,
+} from '../starterAveugle.js'
 
 describe('fin du tirage', () => {
   it('passe aux évolutions finales après 6 manches', () => {
@@ -14,5 +20,12 @@ describe('fin du tirage', () => {
     assert.equal(next.host.team.length, 6)
     assert.equal(next.guest.team.length, 6)
     assert.equal(startCombatState({ ...next, status: 'teams' }).status, 'evolve')
+  })
+
+  it('verrouille un choix d’évolution déjà confirmé', () => {
+    const state = emptyGameState()
+    const first = withFinalChoice(state, 'host', 0, { pokemonId: 282, name: 'Gardevoir' })
+    const again = withFinalChoice(first, 'host', 0, { pokemonId: 475, name: 'Gallame' })
+    assert.equal(again.host.finalTeam[0].pokemonId, 282)
   })
 })
