@@ -1,5 +1,4 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
 import PokemonPreviewInfo from './PokemonPreviewInfo.vue'
 import { starterArtworkUrl } from '../services/pokeapi.js'
 import { TOTAL_ROUNDS } from '../services/starterAveugle.js'
@@ -21,39 +20,22 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['pick', 'start-lie', 'place-lie'])
-const pendingId = ref(null)
 
-watch(
-  () => props.pokemon.map((item) => item.id).join(','),
-  () => {
-    pendingId.value = null
-  },
-)
-
-watch(
-  () => props.pickedId,
-  (id) => {
-    pendingId.value = id ? Number(id) : null
-  },
-)
-
-const highlightedId = computed(() => Number(props.pickedId || pendingId.value || 0) || null)
+function pokeName(item) {
+  if (!item) return '…'
+  return props.detailsById[item.id]?.name || item.fr || item.en || `#${item.id}`
+}
 
 function canSelect() {
   return !props.disabled && !props.waiting && !props.pickedId
 }
 
 function onCardClick(id, event) {
-  if (event?.target?.closest('button.cry-btn, button.confirm-btn, audio, a')) return
+  if (event?.target?.closest('button.cry-btn, audio, a')) return
   if (props.assigningLie) {
     emit('place-lie', id)
     return
   }
-  if (!canSelect()) return
-  pendingId.value = id
-}
-
-function confirmPick(id) {
   if (!canSelect()) return
   emit('pick', id)
 }
@@ -63,10 +45,7 @@ function confirmPick(id) {
   <section class="draw" aria-labelledby="draw-title">
     <p class="draw-round">Manche {{ round }} / {{ TOTAL_ROUNDS }}</p>
     <h3 id="draw-title">Voici les propositions pour {{ friendName }}</h3>
-    <p class="draw-desc">
-      Touche un Pokémon, écoute-le si le cri est affiché, puis confirme :
-      <strong>Je prends celui-là</strong>. Sans méga, primo-forme ni Gigamax.
-    </p>
+    <p class="draw-desc">Touche un Pokémon pour l’ajouter à son équipe. Sans méga, primo-forme ni Gigamax.</p>
     <p v-if="assigningLie" class="draw-hint draw-hint--lie">
       Sélectionne l’un des 3 Pokémon : le mensonge s’affichera en dessous, en rouge. Tu ne pourras pas le choisir pour l’équipe.
     </p>
@@ -78,23 +57,15 @@ function confirmPick(id) {
         <article
           class="pick-card"
           :class="{
-            'pick-card--selected': highlightedId === item.id,
+            'pick-card--selected': pickedId === item.id,
             'pick-card--target': assigningLie,
             'pick-card--locked': !assigningLie && (disabled || waiting || Boolean(pickedId)) && pickedId !== item.id,
           }"
           @click="onCardClick(item.id, $event)"
         >
-          <img :src="starterArtworkUrl(item.id)" alt="" />
+          <img :src="starterArtworkUrl(item.id)" :alt="pokeName(item)" />
+          <p class="pick-name">{{ pokeName(item) }}</p>
           <PokemonPreviewInfo :pokemon="detailsById[item.id]" :flags="flags" />
-          <button
-            v-if="!assigningLie && !pickedId && pendingId === item.id"
-            type="button"
-            class="confirm-btn"
-            :disabled="disabled"
-            @click.stop="confirmPick(item.id)"
-          >
-            Je prends celui-là
-          </button>
         </article>
 
         <article
@@ -103,7 +74,8 @@ function confirmPick(id) {
           aria-label="Pokémon mensonge"
         >
           <p class="lie-tag">Mensonge</p>
-          <img :src="starterArtworkUrl(lie.id)" alt="" />
+          <img :src="starterArtworkUrl(lie.id)" :alt="pokeName(lie)" />
+          <p class="pick-name">{{ pokeName(lie) }}</p>
           <PokemonPreviewInfo :pokemon="detailsById[lie.id]" :flags="flags" />
         </article>
       </li>
@@ -226,17 +198,12 @@ h3 {
   object-fit: contain;
 }
 
-.confirm-btn {
-  width: 100%;
-  margin-top: 0.75rem;
-  border: none;
-  border-radius: 14px;
-  min-height: 48px;
-  padding: 0.55rem 0.8rem;
-  background: var(--teal);
-  color: var(--cream);
-  font-size: 1rem;
+.pick-name {
+  margin: 0.35rem 0 0;
+  font-size: 1.05rem;
   font-weight: 800;
+  line-height: 1.2;
+  word-break: break-word;
 }
 
 .lie-tag {
@@ -281,9 +248,8 @@ h3 {
     height: 180px;
   }
 
-  .confirm-btn {
-    min-height: 52px;
-    font-size: 1.05rem;
+  .pick-name {
+    font-size: 1.15rem;
   }
 }
 </style>

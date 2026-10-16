@@ -105,6 +105,7 @@ const lieError = ref('')
 const savingLie = ref(false)
 const evoByFromId = ref({})
 const savingEvo = ref(false)
+const pendingAutoEvo = ref(false)
 const generatingSets = ref(false)
 const regenerating = ref(-1)
 const launchingBattle = ref(false)
@@ -215,7 +216,7 @@ const evoSlots = computed(() =>
       options: loaded?.options || [],
       auto: loaded?.auto || null,
       locked: Boolean(
-        choice?.pokemonId || loaded?.locked || ((loaded?.options || []).length <= 1 && loaded?.auto),
+        choice?.pokemonId || loaded?.locked || (loaded && !loaded.error && (loaded.options || []).length <= 1),
       ),
       choice,
       loading: !loaded,
@@ -665,13 +666,23 @@ watch(
   },
 )
 
+function autoOptionFor(item) {
+  const loaded = evoByFromId.value[item.id]
+  if (!loaded || loaded.error) return null
+  return loaded.auto || (loaded.options?.length === 1 ? loaded.options[0] : null)
+}
+
 async function applyAutoEvolutions() {
-  if (!invite.value || !myRole.value || savingEvo.value) return
+  if (!invite.value || !myRole.value) return
+  if (savingEvo.value) {
+    pendingAutoEvo.value = true
+    return
+  }
   let next = parseGameState(invite.value)
   let changed = false
   myTeam.value.forEach((item, index) => {
-    if (next[myRole.value].finalTeam?.[index]) return
-    const auto = evoByFromId.value[item.id]?.auto
+    if (next[myRole.value].finalTeam?.[index]?.pokemonId) return
+    const auto = autoOptionFor(item)
     if (!auto) return
     next = withFinalChoice(next, myRole.value, index, {
       fromId: item.id,
@@ -691,6 +702,10 @@ async function applyAutoEvolutions() {
     await maybeHostAdvance(result.invite)
   } else {
     startersError.value = result.message
+  }
+  if (pendingAutoEvo.value) {
+    pendingAutoEvo.value = false
+    await applyAutoEvolutions()
   }
 }
 
@@ -715,6 +730,7 @@ async function chooseEvolution(index, option) {
   }
   invite.value = result.invite
   await maybeHostAdvance(result.invite)
+  await applyAutoEvolutions()
 }
 
 async function regenSet(index) {
@@ -1013,7 +1029,8 @@ onUnmounted(() => {
         <p v-else-if="loadingDetails" class="hint">Chargement de la fiche…</p>
         <div v-if="selected && !loadingDetails" class="lie-choice">
           <div class="pick-preview">
-            <img :src="starterArtworkUrl(selected.id)" alt="" />
+            <img :src="starterArtworkUrl(selected.id)" :alt="selected.name || selected.fr" />
+            <p class="pick-preview-name">{{ selected.name || selected.fr || selected.en }}</p>
             <PokemonPreviewInfo :pokemon="selected" :flags="infoFlags" />
           </div>
           <button type="button" class="lie-confirm" @click="chooseAsLie">Choisir comme mensonge</button>
@@ -1347,6 +1364,13 @@ h3 {
   display: block;
   margin: 0 auto;
   max-height: 110px;
+}
+
+.pick-preview-name {
+  margin: 0.4rem 0 0;
+  text-align: center;
+  font-size: 1.05rem;
+  font-weight: 800;
 }
 
 .lie-confirm,

@@ -29,7 +29,8 @@ function displayChoice(slot) {
 }
 
 function displayName(slot) {
-  return displayChoice(slot)?.name || slot.fromName || '…'
+  const chosen = displayChoice(slot)
+  return chosen?.name || chosen?.fr || slot.fromName || '…'
 }
 
 function displayArt(slot) {
@@ -88,7 +89,7 @@ function confirmOption(slot) {
           <img :src="displayArt(slot)" :alt="displayName(slot)" />
           <span class="name">{{ displayName(slot) }}</span>
           <small v-if="slot.pending" class="pending">Attente</small>
-          <small v-else-if="slot.choice?.pokemonId && !readonly" class="pending">Verrouillé</small>
+          <small v-else-if="!canChoose(slot) && !readonly" class="pending">Verrouillé</small>
           <div v-if="canChoose(slot)" class="evo-options">
             <button
               v-for="option in slot.options"
