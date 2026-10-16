@@ -2,44 +2,64 @@
 import { starterArtworkUrl } from '../services/pokeapi.js'
 
 defineProps({
+  title: { type: String, default: 'Ton équipe' },
   slots: { type: Array, default: () => [] },
   saving: { type: Boolean, default: false },
   waitingFriend: { type: Boolean, default: false },
+  readonly: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['choose'])
+
+function displayName(slot) {
+  return slot.choice?.name || slot.options?.[0]?.name || slot.fromName || '…'
+}
+
+function displayArt(slot) {
+  return (
+    slot.choice?.artwork ||
+    slot.options?.find((option) => option.pokemonId === slot.choice?.pokemonId)?.artwork ||
+    slot.options?.[0]?.artwork ||
+    starterArtworkUrl(slot.choice?.pokemonId || slot.fromId)
+  )
+}
+
+function canChoose(slot) {
+  return !slot.readonly && !slot.auto && !slot.locked && (slot.options || []).length > 1
+}
 </script>
 
 <template>
-  <section class="evo" aria-labelledby="evo-title">
-    <h3 id="evo-title">Évolutions finales</h3>
-    <p class="dex-desc">
-      Chaque Pokémon passe à son dernier stade. S’il y a plusieurs possibilités, choisis-en une.
+  <section class="evo" :aria-labelledby="title.replace(/\s+/g, '-').toLowerCase()">
+    <h3>{{ title }}</h3>
+    <p v-if="!readonly" class="dex-desc">
+      Une ligne, les formes finales. Un Pokémon déjà au dernier stade reste celui-là.
     </p>
     <p v-if="waitingFriend" class="hint">En attente des choix de ton ami…</p>
 
-    <ul class="evo-list">
-      <li v-for="slot in slots" :key="slot.index">
-        <div class="evo-from">
-          <img :src="starterArtworkUrl(slot.fromId)" alt="" />
-          <span>{{ slot.fromName }}</span>
-        </div>
-        <p v-if="slot.loading" class="hint">Chargement des évolutions…</p>
-        <p v-else-if="slot.error" class="error">{{ slot.error }}</p>
-        <div v-else class="evo-options">
-          <button
-            v-for="option in slot.options"
-            :key="option.pokemonId"
-            type="button"
-            class="evo-card"
-            :class="{ 'evo-card--on': slot.choice?.pokemonId === option.pokemonId }"
-            :disabled="saving || Boolean(slot.auto)"
-            @click="emit('choose', slot.index, option)"
-          >
-            <img :src="option.artwork || starterArtworkUrl(option.pokemonId)" :alt="option.name" />
-            <span>{{ option.name }}</span>
-          </button>
-        </div>
+    <ul class="evo-row">
+      <li v-for="slot in slots" :key="slot.index" class="evo-slot">
+        <p v-if="slot.loading" class="hint">…</p>
+        <p v-else-if="slot.error" class="error">!</p>
+        <template v-else>
+          <img :src="displayArt(slot)" :alt="displayName(slot)" />
+          <span class="name">{{ displayName(slot) }}</span>
+          <small v-if="slot.pending" class="pending">Attente</small>
+          <div v-if="canChoose(slot)" class="evo-options">
+            <button
+              v-for="option in slot.options"
+              :key="option.pokemonId"
+              type="button"
+              class="evo-card"
+              :class="{ 'evo-card--on': slot.choice?.pokemonId === option.pokemonId }"
+              :disabled="saving"
+              :title="option.name"
+              @click="emit('choose', slot.index, option)"
+            >
+              <img :src="option.artwork || starterArtworkUrl(option.pokemonId)" :alt="option.name" />
+            </button>
+          </div>
+        </template>
       </li>
     </ul>
   </section>
@@ -50,7 +70,7 @@ const emit = defineEmits(['choose'])
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 22px;
-  padding: 1.15rem;
+  padding: 1rem 1.05rem 1.1rem;
   box-shadow: var(--shadow);
 }
 
@@ -59,8 +79,18 @@ const emit = defineEmits(['choose'])
   color: var(--text-soft);
 }
 
+h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.dex-desc {
+  margin: 0.35rem 0 0;
+  font-size: 0.88rem;
+}
+
 .hint {
-  margin: 0.5rem 0 0;
+  margin: 0.45rem 0 0;
 }
 
 .error {
@@ -68,48 +98,61 @@ const emit = defineEmits(['choose'])
   font-weight: 600;
 }
 
-.evo-list {
+.evo-row {
   list-style: none;
-  margin: 1rem 0 0;
+  margin: 0.75rem 0 0;
   padding: 0;
-  display: grid;
-  gap: 1rem;
-}
-
-.evo-from {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-weight: 700;
+  gap: 0.4rem;
+  overflow-x: auto;
 }
 
-.evo-from img {
-  width: 40px;
-  height: 40px;
+.evo-slot {
+  flex: 1 1 0;
+  min-width: 72px;
+  display: grid;
+  justify-items: center;
+  gap: 0.2rem;
+  text-align: center;
+}
+
+.evo-slot > img {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+}
+
+.name {
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.pending {
+  color: var(--text-soft);
+  font-size: 0.68rem;
 }
 
 .evo-options {
-  margin-top: 0.45rem;
   display: flex;
+  justify-content: center;
+  gap: 0.18rem;
   flex-wrap: wrap;
-  gap: 0.5rem;
 }
 
 .evo-card {
-  width: 104px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 8px;
   background: var(--surface-muted);
-  padding: 0.45rem;
-  display: grid;
-  gap: 0.25rem;
-  justify-items: center;
-  font-size: 0.82rem;
+  overflow: hidden;
 }
 
 .evo-card img {
-  width: 72px;
-  height: 72px;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
 }
 

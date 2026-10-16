@@ -29,6 +29,7 @@ import {
   STARTER_GAME_ID,
   updateInvite,
 } from '../services/invites.js'
+import { testerNotificationPush } from '../services/notifications.js'
 import {
   fillFrenchNames,
   getPokemonDetails,
@@ -205,35 +206,37 @@ const myFinalsReady = computed(() => Boolean(myRole.value && finalsReady(gameSta
 const evoSlots = computed(() =>
   myTeam.value.map((item, index) => {
     const loaded = evoByFromId.value[item.id]
+    const choice = gameState.value[myRole.value]?.finalTeam?.[index] || null
     return {
       index,
       fromId: item.id,
       fromName: item.fr || item.en,
       options: loaded?.options || [],
       auto: loaded?.auto || null,
-      choice: gameState.value[myRole.value]?.finalTeam?.[index] || null,
+      locked: Boolean(loaded?.locked || ((loaded?.options || []).length <= 1 && loaded?.auto)),
+      choice,
       loading: !loaded,
       error: loaded?.error || '',
     }
   }),
 )
-const theirFinalDisplay = computed(() => {
+const theirEvoSlots = computed(() => {
   if (!myRole.value) return []
   const other = myRole.value === 'host' ? 'guest' : 'host'
   const finals = gameState.value[other]?.finalTeam || []
   return theirTeam.value.map((item, index) => {
-    const choice = finals[index]
-    if (choice?.pokemonId) {
-      return {
-        id: choice.pokemonId,
-        name: choice.name || item.fr || item.en,
-        pending: false,
-      }
-    }
+    const choice = finals[index] || null
     return {
-      id: item.id,
-      name: item.fr || item.en,
-      pending: true,
+      index,
+      fromId: item.id,
+      fromName: item.fr || item.en,
+      options: [],
+      auto: Boolean(choice?.pokemonId),
+      locked: true,
+      readonly: true,
+      choice,
+      pending: !choice?.pokemonId,
+      loading: false,
     }
   })
 })
@@ -619,6 +622,20 @@ watch(
 )
 
 watch(
+  () => gameState.value.battle?.status,
+  (status, previous) => {
+    if (status !== 'done' || previous !== 'running' || launchingBattle.value) return
+    const { title, body } = battleNotice(gameState.value.battle, gameState.value)
+    try {
+      if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
+      new Notification(title, { body })
+    } catch {
+      // l’écran affiche déjà le résultat
+    }
+  },
+)
+
+watch(
   () => [evolving.value, waitingForCombat.value, myTeam.value.map((item) => item.id).join(',')].join('|'),
   async () => {
     if ((!evolving.value && !waitingForCombat.value) || !myRole.value) return
@@ -651,6 +668,7 @@ async function applyAutoEvolutions() {
       pokemonId: auto.pokemonId,
       slug: auto.slug,
       name: auto.name,
+      artwork: auto.artwork || auto.sprite || '',
     })
     changed = true
   })
@@ -676,6 +694,7 @@ async function chooseEvolution(index, option) {
       pokemonId: option.pokemonId,
       slug: option.slug,
       name: option.name,
+      artwork: option.artwork || option.sprite || '',
     }),
   })
   savingEvo.value = false
@@ -712,16 +731,43 @@ async function regenSet(index) {
   regenerating.value = -1
 }
 
+function battleNotice(results, state) {
+  const hostName = state?.host?.playerName || 'Hôte'
+  const guestName = state?.guest?.playerName || 'Invité'
+  const hostPct = Math.round((Number(results?.hostWinRate) || 0) * 1000) / 10
+  const guestPct = Math.round((Number(results?.guestWinRate) || 0) * 1000) / 10
+  if (results?.verdict === 'host') {
+    return { title: `${hostName} l’emporte`, body: `${hostPct} % de victoire contre ${guestName}` }
+  }
+  if (results?.verdict === 'guest') {
+    return { title: `${guestName} l’emporte`, body: `${guestPct} % de victoire contre ${hostName}` }
+  }
+  return {
+    title: 'Combat simulé terminé',
+    body: `Équilibré — ${hostName} ${hostPct} % / ${guestName} ${guestPct} %`,
+  }
+}
+
+async function notifyBattleOver(results) {
+  const { title, body } = battleNotice(results, parseGameState(invite.value))
+  await testerNotificationPush({ title, body })
+}
+
 async function startBattle() {
   if (!invite.value || launchingBattle.value || !bothSetsReady(gameState.value)) return
-  if (gameState.value.battle?.status === 'running' || gameState.value.battle?.status === 'done') return
   launchingBattle.value = true
-  const seed = makeSeed()
   try {
+    const current = await latestInvite(invite.value)
+    const currentState = parseGameState(current)
+    if (currentState.battle?.status === 'running' || currentState.battle?.status === 'done') {
+      if (current) invite.value = current
+      return
+    }
+    const seed = makeSeed()
     const typeChart = typeChartRef.value || (await loadTypeChart())
     typeChartRef.value = typeChart
-    const started = await updateInvite(invite.value.id, {
-      game_state: withBattleProgress(parseGameState(invite.value), {
+    const started = await updateInvite(current.id, {
+      game_state: withBattleProgress(currentState, {
         seed,
         status: 'running',
         played: 0,
@@ -731,33 +777,36 @@ async function startBattle() {
       }),
     })
     if (started.success) invite.value = started.invite
-    const hostName = gameState.value.host.playerName || 'host'
-    const guestName = gameState.value.guest.playerName || 'guest'
+    const hostName = parseGameState(invite.value).host.playerName || 'host'
+    const guestName = parseGameState(invite.value).guest.playerName || 'guest'
+    let lastSync = 0
     const results = await runBattleCampaign(
       {
-        hostSets: gameState.value.host.sets,
-        guestSets: gameState.value.guest.sets,
+        hostSets: parseGameState(invite.value).host.sets,
+        guestSets: parseGameState(invite.value).guest.sets,
         hostName,
         guestName,
         seed,
         typeChart,
       },
       (progress) => {
-        invite.value = {
-          ...invite.value,
-          game_state: withBattleProgress(parseGameState(invite.value), {
-            seed,
-            status: 'running',
-            played: progress.played || 0,
-            hostWins: progress.hostWins,
-            guestWins: progress.guestWins,
-            ties: progress.ties,
-            interval: progress.interval,
-            minBattles: progress.minBattles,
-            maxBattles: progress.maxBattles,
-            progress: progress.progress || 0,
-          }),
-        }
+        const nextState = withBattleProgress(parseGameState(invite.value), {
+          seed,
+          status: 'running',
+          played: progress.played || 0,
+          hostWins: progress.hostWins,
+          guestWins: progress.guestWins,
+          ties: progress.ties,
+          interval: progress.interval,
+          minBattles: progress.minBattles,
+          maxBattles: progress.maxBattles,
+          progress: progress.progress || 0,
+        })
+        invite.value = { ...invite.value, game_state: nextState }
+        const now = Date.now()
+        if (now - lastSync < 900) return
+        lastSync = now
+        updateInvite(invite.value.id, { game_state: nextState })
       },
     )
     const finished = await updateInvite(invite.value.id, {
@@ -772,6 +821,7 @@ async function startBattle() {
     else startersError.value = finished.message
     const saved = await saveMatchBattleResults({ inviteId: invite.value.id }, results)
     if (!saved.success) startersError.value = saved.message
+    await notifyBattleOver(results)
   } catch (error) {
     startersError.value = error.message || 'La simulation a échoué.'
   }
@@ -964,26 +1014,18 @@ onUnmounted(() => {
 
     <EvolutionChoice
       v-if="evolving || waitingForCombat"
+      :title="`Ton équipe · ${mySavedName}`"
       :slots="evoSlots"
       :saving="savingEvo"
       :waiting-friend="myFinalsReady && !bothFinalsChosen(gameState)"
       @choose="chooseEvolution"
     />
-    <section
-      v-if="(evolving || waitingForCombat) && theirFinalDisplay.length"
-      class="draw-result"
-      aria-labelledby="friend-finals-title"
-    >
-      <h3 id="friend-finals-title">Équipe de {{ friendName }}</h3>
-      <p class="dex-desc">Évolutions finales, mises à jour dès que ton ami a choisi.</p>
-      <ul class="friend-finals">
-        <li v-for="(item, index) in theirFinalDisplay" :key="`them-final-${item.id}-${index}`">
-          <img :src="starterArtworkUrl(item.id)" :alt="item.name" />
-          <span>{{ item.name }}</span>
-          <small v-if="item.pending">En attente</small>
-        </li>
-      </ul>
-    </section>
+    <EvolutionChoice
+      v-if="(evolving || waitingForCombat) && theirEvoSlots.length"
+      :title="`Équipe de ${friendName}`"
+      :slots="theirEvoSlots"
+      readonly
+    />
     <p v-if="generatingSets || (evolving && bothFinalsChosen(gameState) && !bothSetsReady(gameState))" class="friend-banner">
       Préparation des sets de combat…
     </p>
@@ -1001,7 +1043,7 @@ onUnmounted(() => {
         v-if="previewing"
         type="button"
         class="start-btn"
-        :disabled="launchingBattle || !bothSetsReady(gameState)"
+        :disabled="launchingBattle || gameState.battle?.status === 'running' || !bothSetsReady(gameState)"
         @click="startBattle"
       >
         {{ launchingBattle ? 'Lancement…' : 'Lancer le combat' }}
@@ -1170,33 +1212,9 @@ h2 {
   padding: 0.35rem 0.55rem;
 }
 
-.teams img,
-.friend-finals img {
+.teams img {
   width: 40px;
   height: 40px;
-}
-
-.friend-finals {
-  list-style: none;
-  margin: 0.9rem 0 0;
-  padding: 0;
-  display: grid;
-  gap: 0.4rem;
-}
-
-.friend-finals li {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  background: var(--surface-muted);
-  border-radius: 12px;
-  padding: 0.35rem 0.55rem;
-}
-
-.friend-finals small {
-  margin-left: auto;
-  color: var(--text-soft);
-  font-size: 0.75rem;
 }
 
 .dex {

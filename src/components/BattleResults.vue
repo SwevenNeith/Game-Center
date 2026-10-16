@@ -33,16 +33,14 @@ const barPct = computed(() => {
     <div v-if="running" class="wait" role="status" aria-live="polite">
       <span class="spinner" aria-hidden="true"></span>
       <p class="hint">
-        <template v-if="!battle.played">Préparation des sets et des évolutions…</template>
-        <template v-else>
-          Simulations en cours… {{ battle.played }}
-          <template v-if="battle.maxBattles"> / {{ battle.maxBattles }}</template>
-          matchs
-        </template>
+        Simulations en cours…
+        {{ battle.played || 0 }}
+        <template v-if="battle.maxBattles"> / {{ battle.maxBattles }}</template>
+        matchs
       </p>
       <div
         class="bar"
-        :class="{ 'bar--wait': !battle.played }"
+        :class="{ 'bar--wait': !battle.played && !battle.progress }"
         :aria-valuenow="barPct"
         aria-valuemin="0"
         aria-valuemax="100"

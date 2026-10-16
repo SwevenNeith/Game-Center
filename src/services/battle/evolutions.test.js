@@ -109,6 +109,87 @@ describe('évolutions finales', () => {
     assert.deepEqual(result.options.map((item) => item.slug).sort(), [...eeveelutions].sort())
   })
 
+  it('verrouille une forme déjà finale (Gardevoir, pas Gallame)', async () => {
+    globalThis.fetch = (url) => {
+      const path = String(url)
+      if (path.includes('pokemon-species/gardevoir') || path.includes('pokemon-species/282')) {
+        return json(species('gardevoir', 282))
+      }
+      if (path.includes('evolution-chain/gardevoir')) {
+        return json({
+          chain: {
+            species: { name: 'ralts', url: 'https://pokeapi.co/api/v2/pokemon-species/ralts/' },
+            evolves_to: [
+              {
+                species: { name: 'kirlia', url: 'https://pokeapi.co/api/v2/pokemon-species/kirlia/' },
+                evolves_to: [
+                  {
+                    species: { name: 'gardevoir', url: 'https://pokeapi.co/api/v2/pokemon-species/gardevoir/' },
+                    evolves_to: [],
+                  },
+                  {
+                    species: { name: 'gallade', url: 'https://pokeapi.co/api/v2/pokemon-species/gallade/' },
+                    evolves_to: [],
+                  },
+                ],
+              },
+            ],
+          },
+        })
+      }
+      if (path.includes('/pokemon/gardevoir') || path.includes('/pokemon/282')) return json(pokemon('gardevoir', 282))
+      if (path.includes('pokemon-form/gardevoir')) return json(form('gardevoir'))
+      if (path.includes('gallade')) return json(pokemon('gallade', 475))
+      return json({})
+    }
+    const result = await getFinalEvolutions(282)
+    assert.equal(result.locked, true)
+    assert.equal(result.auto.slug, 'gardevoir')
+    assert.equal(result.options.length, 1)
+    assert.equal(result.options.some((item) => item.slug === 'gallade'), false)
+  })
+
+  it('propose Gardevoir et Gallame depuis Kirlia', async () => {
+    globalThis.fetch = (url) => {
+      const path = String(url)
+      if (path.includes('pokemon-species/kirlia') || path.includes('pokemon-species/281')) {
+        return json(species('kirlia', 281))
+      }
+      if (path.includes('evolution-chain/kirlia')) {
+        return json({
+          chain: {
+            species: { name: 'ralts', url: 'https://pokeapi.co/api/v2/pokemon-species/ralts/' },
+            evolves_to: [
+              {
+                species: { name: 'kirlia', url: 'https://pokeapi.co/api/v2/pokemon-species/kirlia/' },
+                evolves_to: [
+                  {
+                    species: { name: 'gardevoir', url: 'https://pokeapi.co/api/v2/pokemon-species/gardevoir/' },
+                    evolves_to: [],
+                  },
+                  {
+                    species: { name: 'gallade', url: 'https://pokeapi.co/api/v2/pokemon-species/gallade/' },
+                    evolves_to: [],
+                  },
+                ],
+              },
+            ],
+          },
+        })
+      }
+      if (path.includes('pokemon-species/gardevoir')) return json(species('gardevoir', 282))
+      if (path.includes('pokemon-species/gallade')) return json(species('gallade', 475))
+      if (path.includes('/pokemon/gardevoir')) return json(pokemon('gardevoir', 282))
+      if (path.includes('/pokemon/gallade')) return json(pokemon('gallade', 475))
+      if (path.includes('pokemon-form/gardevoir')) return json(form('gardevoir'))
+      if (path.includes('pokemon-form/gallade')) return json(form('gallade'))
+      return json({})
+    }
+    const result = await getFinalEvolutions(281)
+    assert.equal(result.locked, false)
+    assert.deepEqual(result.options.map((item) => item.slug).sort(), ['gallade', 'gardevoir'])
+  })
+
   it('laisse un Pokémon sans évolution tel quel (Métamorph)', async () => {
     globalThis.fetch = (url) => {
       const path = String(url)

@@ -42,46 +42,51 @@ function natureFr(nature) {
   <section class="recap">
     <h3>{{ title }}</h3>
     <ul class="set-list">
-      <li v-for="(set, index) in sets" :key="set.pokemonId || index" class="set-card">
-        <header class="set-head">
-          <img :src="set.artwork || set.sprite" :alt="set.name" />
-          <div>
-            <strong>{{ set.name }}</strong>
-            <p class="muted">N.{{ set.level }} · {{ natureFr(set.nature) }}</p>
+      <li v-for="(set, index) in sets" :key="set.pokemonId || index">
+        <details class="set-card">
+          <summary class="set-head">
+            <img :src="set.artwork || set.sprite" :alt="set.name" />
+            <div class="set-title">
+              <strong>{{ set.name }}</strong>
+              <p class="muted">N.{{ set.level }} · {{ natureFr(set.nature) }}</p>
+            </div>
+            <button
+              v-if="canRegen"
+              type="button"
+              class="regen"
+              :disabled="regenerating >= 0"
+              @click.prevent.stop="emit('regen', index)"
+            >
+              {{ regenerating === index ? 'Tirage…' : 'Regénérer' }}
+            </button>
+          </summary>
+
+          <div class="set-body">
             <ul class="chips">
               <li v-for="type in set.types" :key="type.slug" class="chip" :style="typeStyle(type)">
                 {{ type.name }}
               </li>
             </ul>
+            <p class="line"><strong>Talent</strong> {{ set.ability?.name }}</p>
+            <p class="line item-line">
+              <img v-if="set.item?.sprite" :src="set.item.sprite" alt="" />
+              <strong>Objet</strong> {{ set.item?.name }}
+            </p>
+            <ul class="moves">
+              <li v-for="move in (set.moves || []).slice(0, 4)" :key="move.slug">
+                <span class="chip" :style="{ background: move.color || '#888', color: '#fff' }">{{ move.typeName }}</span>
+                <strong>{{ move.name }}</strong>
+                <em>{{ move.className }}</em>
+              </li>
+            </ul>
+            <ul class="stats">
+              <li v-for="[key, value] in statEntries(set.stats)" :key="key">
+                <span>{{ STAT_LABELS[key] || key }}</span>
+                <strong>{{ value }}</strong>
+              </li>
+            </ul>
           </div>
-          <button
-            v-if="canRegen"
-            type="button"
-            class="regen"
-            :disabled="regenerating >= 0"
-            @click="emit('regen', index)"
-          >
-            {{ regenerating === index ? 'Tirage…' : 'Regénérer' }}
-          </button>
-        </header>
-        <p class="line"><strong>Talent</strong> {{ set.ability?.name }}</p>
-        <p class="line item-line">
-          <img v-if="set.item?.sprite" :src="set.item.sprite" alt="" />
-          <strong>Objet</strong> {{ set.item?.name }}
-        </p>
-        <ul class="moves">
-          <li v-for="move in set.moves" :key="move.slug">
-            <span class="chip" :style="{ background: move.color || '#888', color: '#fff' }">{{ move.typeName }}</span>
-            <span>{{ move.name }}</span>
-            <em>{{ move.className }}</em>
-          </li>
-        </ul>
-        <ul class="stats">
-          <li v-for="[key, value] in statEntries(set.stats)" :key="key">
-            <span>{{ STAT_LABELS[key] || key }}</span>
-            <strong>{{ value }}</strong>
-          </li>
-        </ul>
+        </details>
       </li>
     </ul>
   </section>
@@ -98,34 +103,51 @@ function natureFr(nature) {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 0.75rem;
+  gap: 0.55rem;
 }
 
 .set-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 18px;
-  padding: 0.85rem;
+  padding: 0.35rem 0.7rem 0.45rem;
   box-shadow: var(--shadow);
 }
 
 .set-head {
   display: grid;
-  grid-template-columns: 64px 1fr auto;
-  gap: 0.65rem;
+  grid-template-columns: 48px 1fr auto;
+  gap: 0.55rem;
   align-items: center;
+  cursor: pointer;
+  list-style: none;
+  min-height: 56px;
+}
+
+.set-head::-webkit-details-marker {
+  display: none;
 }
 
 .set-head img {
-  width: 64px;
-  height: 64px;
+  width: 48px;
+  height: 48px;
   object-fit: contain;
 }
 
+.set-title strong {
+  font-size: 1rem;
+}
+
 .muted {
-  margin: 0.1rem 0 0.3rem;
+  margin: 0.1rem 0 0;
   color: var(--text-soft);
-  font-size: 0.85rem;
+  font-size: 0.82rem;
+}
+
+.set-body {
+  padding: 0.15rem 0 0.55rem;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  margin-top: 0.2rem;
 }
 
 .chips,
@@ -140,6 +162,7 @@ function natureFr(nature) {
   display: flex;
   gap: 0.3rem;
   flex-wrap: wrap;
+  margin: 0.55rem 0 0.2rem;
 }
 
 .chip {
@@ -150,7 +173,7 @@ function natureFr(nature) {
 }
 
 .line {
-  margin: 0.35rem 0 0;
+  margin: 0.3rem 0 0;
   font-size: 0.9rem;
 }
 
@@ -166,23 +189,31 @@ function natureFr(nature) {
 }
 
 .moves {
-  margin-top: 0.45rem;
+  margin-top: 0.55rem;
   display: grid;
-  gap: 0.25rem;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
 }
 
 .moves li {
   display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 0.4rem;
-  align-items: center;
+  gap: 0.12rem;
+  min-height: 64px;
+  padding: 0.45rem 0.5rem;
+  border-radius: 12px;
+  background: var(--surface-muted);
+  align-content: center;
+}
+
+.moves strong {
   font-size: 0.88rem;
+  line-height: 1.15;
 }
 
 .moves em {
   color: var(--text-soft);
   font-style: normal;
-  font-size: 0.78rem;
+  font-size: 0.72rem;
 }
 
 .stats {
@@ -201,15 +232,15 @@ function natureFr(nature) {
 .regen {
   border: none;
   border-radius: 10px;
-  min-height: 40px;
-  padding: 0 0.7rem;
+  min-height: 36px;
+  padding: 0 0.65rem;
   background: var(--surface-muted);
   font-weight: 700;
 }
 
 @media (max-width: 720px) {
   .set-head {
-    grid-template-columns: 56px 1fr;
+    grid-template-columns: 44px 1fr;
   }
 
   .regen {
