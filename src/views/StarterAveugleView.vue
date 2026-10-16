@@ -1,12 +1,15 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import BattleResults from '../components/BattleResults.vue'
+import EvolutionChoice from '../components/EvolutionChoice.vue'
 import InfoFlagsPanel from '../components/InfoFlagsPanel.vue'
 import InviteFriendMenu from '../components/InviteFriendMenu.vue'
 import MatchHistoryMenu from '../components/MatchHistoryMenu.vue'
 import PokemonFiche from '../components/PokemonFiche.vue'
 import PokemonPreviewInfo from '../components/PokemonPreviewInfo.vue'
 import StarterDraw from '../components/StarterDraw.vue'
+import TeamSetRecap from '../components/TeamSetRecap.vue'
 import {
   fetchActiveInviteForDevice,
   fetchInviteByCode,
@@ -21,6 +24,8 @@ import {
   purgeExpiredInvites,
   rememberGameSession,
   saveCompletedMatch,
+  saveMatchBattleResults,
+  saveMatchFinalTeams,
   STARTER_GAME_ID,
   updateInvite,
 } from '../services/invites.js'
@@ -33,18 +38,40 @@ import {
   starterArtworkUrl,
 } from '../services/pokeapi.js'
 import {
+  generateSet,
+  generateTeamSets,
+  getFinalEvolutions,
+  loadTypeChart,
+  makeSeed,
+  runBattleCampaign,
+} from '../services/battle/index.js'
+import {
+  bothFinalsChosen,
+  bothSetsReady,
   completeRound,
   dealRound,
   defaultInfoFlags,
   emptyGameState,
+  finalsReady,
+  isBattle,
   isEnded,
+  isEvolve,
   isInfoPhase,
   isPicking,
+  isPreview,
+  isTeamsPhase,
   needsDeal,
   parseGameState,
+  startCombatState,
+  teamsComplete,
+  withBattleProgress,
+  withBattleResults,
+  withFinalChoice,
   withInfoFlag,
   withLie,
+  withOneSet,
   withPlayerName,
+  withTeamSets,
 } from '../services/starterAveugle.js'
 
 const route = useRoute()
@@ -74,6 +101,12 @@ const assigningLie = ref(false)
 const pendingLie = ref(null)
 const lieError = ref('')
 const savingLie = ref(false)
+const evoByFromId = ref({})
+const savingEvo = ref(false)
+const generatingSets = ref(false)
+const regenerating = ref(-1)
+const launchingBattle = ref(false)
+const typeChartRef = ref(null)
 let searchTimer = null
 let skipNextSearch = false
 let hostWriteChain = Promise.resolve()
@@ -104,6 +137,14 @@ const waitingForFriendName = computed(
   () => Boolean(invite.value && guestJoined.value && !friendName.value),
 )
 const gameOver = computed(() => gameState.value.status === 'done')
+const teamsReady = computed(() => teamsComplete(gameState.value))
+const waitingForCombat = computed(() => isTeamsPhase(gameState.value))
+const evolving = computed(() => isEvolve(gameState.value))
+const previewing = computed(() => isPreview(gameState.value))
+const battling = computed(() => isBattle(gameState.value) || gameState.value.battle?.status === 'running')
+const combatFlow = computed(
+  () => evolving.value || previewing.value || battling.value || gameOver.value || (teamsReady.value && !picking.value),
+)
 const myPick = computed(() => {
   if (!invite.value || !myRole.value) return null
   return myRole.value === 'host' ? invite.value.host_pick : invite.value.guest_pick
@@ -146,7 +187,7 @@ const detailsNeeded = computed(() => {
 const picking = computed(() => isPicking(gameState.value))
 const infoPhase = computed(() => Boolean(invite.value && isInfoPhase(gameState.value)))
 const showFlags = computed(
-  () => !gameOver.value && !picking.value && Boolean(mySavedName.value || invite.value),
+  () => !combatFlow.value && !picking.value && Boolean(mySavedName.value || invite.value),
 )
 const showDraw = computed(
   () => picking.value && !gameOver.value && myProposals.value.length === 3,
@@ -158,8 +199,50 @@ const infoFlags = computed(() =>
   invite.value ? gameState.value.infoFlags : localFlags.value,
 )
 const flagsEditable = computed(
-  () => (!myRole.value || myRole.value === 'host') && !picking.value && !gameOver.value,
+  () => (!myRole.value || myRole.value === 'host') && !picking.value && !combatFlow.value,
 )
+const myFinalsReady = computed(() => Boolean(myRole.value && finalsReady(gameState.value[myRole.value])))
+const evoSlots = computed(() =>
+  myTeam.value.map((item, index) => {
+    const loaded = evoByFromId.value[item.id]
+    return {
+      index,
+      fromId: item.id,
+      fromName: item.fr || item.en,
+      options: loaded?.options || [],
+      auto: loaded?.auto || null,
+      choice: gameState.value[myRole.value]?.finalTeam?.[index] || null,
+      loading: !loaded,
+      error: loaded?.error || '',
+    }
+  }),
+)
+const theirFinalDisplay = computed(() => {
+  if (!myRole.value) return []
+  const other = myRole.value === 'host' ? 'guest' : 'host'
+  const finals = gameState.value[other]?.finalTeam || []
+  return theirTeam.value.map((item, index) => {
+    const choice = finals[index]
+    if (choice?.pokemonId) {
+      return {
+        id: choice.pokemonId,
+        name: choice.name || item.fr || item.en,
+        pending: false,
+      }
+    }
+    return {
+      id: item.id,
+      name: item.fr || item.en,
+      pending: true,
+    }
+  })
+})
+const mySets = computed(() => (myRole.value ? gameState.value[myRole.value]?.sets || [] : []))
+const theirSets = computed(() => {
+  if (!myRole.value) return []
+  const other = myRole.value === 'host' ? 'guest' : 'host'
+  return gameState.value[other]?.sets || []
+})
 
 const inviteExtra = computed(() => {
   const state = emptyGameState()
@@ -206,6 +289,7 @@ function applyInvite(next, options = {}) {
 
 async function persistMatchIfDone(nextInvite) {
   if (!nextInvite || !pokedex.value.length) return
+  if (!teamsComplete(parseGameState(nextInvite))) return
   const saved = await saveCompletedMatch(nextInvite, pokedex.value)
   if (saved.invite) invite.value = saved.invite
   else if (!saved.success) startersError.value = saved.message
@@ -243,15 +327,54 @@ function onToggleFlag(fieldId, enabled) {
   })
 }
 
+async function generateBothSets(currentInvite) {
+  const state = parseGameState(currentInvite)
+  if (!bothFinalsChosen(state) || bothSetsReady(state) || generatingSets.value) return
+  generatingSets.value = true
+  try {
+    typeChartRef.value = await loadTypeChart()
+    const hostSets = await generateTeamSets(state.host.finalTeam)
+    const guestSets = await generateTeamSets(state.guest.finalTeam)
+    const result = await updateInvite(currentInvite.id, {
+      game_state: withTeamSets(state, hostSets, guestSets),
+    })
+    if (result.success) invite.value = result.invite
+    else startersError.value = result.message
+  } catch (error) {
+    startersError.value = error.message || 'Impossible de générer les sets.'
+  }
+  generatingSets.value = false
+}
+
 async function maybeHostAdvance(nextInvite) {
   if (!nextInvite || !pokedex.value.length) return
   const incoming = parseGameState(nextInvite)
   if (isEnded(incoming)) return
 
-  if (incoming.status === 'done') {
-    await persistMatchIfDone(nextInvite)
+  if (teamsComplete(incoming)) await persistMatchIfDone(nextInvite)
+
+  if (incoming.status === 'teams' && localPlayerRole(nextInvite) === 'host') {
+    const started = await updateInvite(nextInvite.id, {
+      game_state: startCombatState(incoming),
+    })
+    if (started.success) {
+      invite.value = started.invite
+      await maybeHostAdvance(started.invite)
+    } else {
+      startersError.value = started.message
+    }
     return
   }
+
+  if (incoming.status === 'evolve' && bothFinalsChosen(incoming)) {
+    await saveMatchFinalTeams(nextInvite, pokedex.value)
+    if (!bothSetsReady(incoming) && localPlayerRole(nextInvite) === 'host') {
+      await generateBothSets(nextInvite)
+    }
+    return
+  }
+
+  if (['teams', 'evolve', 'preview', 'battle', 'done'].includes(incoming.status)) return
 
   if (localPlayerRole(nextInvite) !== 'host') return
 
@@ -259,7 +382,7 @@ async function maybeHostAdvance(nextInvite) {
     const current = await latestInvite(nextInvite)
     const state = parseGameState(current)
 
-    if (state.status === 'done') {
+    if (['teams', 'evolve', 'preview', 'battle', 'done'].includes(state.status)) {
       await persistMatchIfDone(current)
       return
     }
@@ -281,9 +404,8 @@ async function maybeHostAdvance(nextInvite) {
       })
       if (result.success) {
         invite.value = result.invite
-        if (parseGameState(result.invite).status === 'done') {
-          await persistMatchIfDone(result.invite)
-        }
+        const nextState = parseGameState(result.invite)
+        if (teamsComplete(nextState)) await persistMatchIfDone(result.invite)
       } else {
         startersError.value = result.message
       }
@@ -496,6 +618,166 @@ watch(
   },
 )
 
+watch(
+  () => [evolving.value, waitingForCombat.value, myTeam.value.map((item) => item.id).join(',')].join('|'),
+  async () => {
+    if ((!evolving.value && !waitingForCombat.value) || !myRole.value) return
+    for (const item of myTeam.value) {
+      if (evoByFromId.value[item.id]) continue
+      try {
+        const data = await getFinalEvolutions(item.id)
+        evoByFromId.value = { ...evoByFromId.value, [item.id]: data }
+      } catch (error) {
+        evoByFromId.value = {
+          ...evoByFromId.value,
+          [item.id]: { options: [], error: error.message || 'Évolution introuvable.' },
+        }
+      }
+    }
+    await applyAutoEvolutions()
+  },
+)
+
+async function applyAutoEvolutions() {
+  if (!invite.value || !myRole.value || savingEvo.value) return
+  let next = parseGameState(invite.value)
+  let changed = false
+  myTeam.value.forEach((item, index) => {
+    if (next[myRole.value].finalTeam?.[index]) return
+    const auto = evoByFromId.value[item.id]?.auto
+    if (!auto) return
+    next = withFinalChoice(next, myRole.value, index, {
+      fromId: item.id,
+      pokemonId: auto.pokemonId,
+      slug: auto.slug,
+      name: auto.name,
+    })
+    changed = true
+  })
+  if (!changed) return
+  savingEvo.value = true
+  const result = await updateInvite(invite.value.id, { game_state: next })
+  savingEvo.value = false
+  if (result.success) {
+    invite.value = result.invite
+    await maybeHostAdvance(result.invite)
+  } else {
+    startersError.value = result.message
+  }
+}
+
+async function chooseEvolution(index, option) {
+  if (!invite.value || !myRole.value || savingEvo.value) return
+  const fromId = myTeam.value[index]?.id
+  savingEvo.value = true
+  const result = await updateInvite(invite.value.id, {
+    game_state: withFinalChoice(parseGameState(invite.value), myRole.value, index, {
+      fromId,
+      pokemonId: option.pokemonId,
+      slug: option.slug,
+      name: option.name,
+    }),
+  })
+  savingEvo.value = false
+  if (!result.success) {
+    startersError.value = result.message
+    return
+  }
+  invite.value = result.invite
+  await maybeHostAdvance(result.invite)
+}
+
+async function regenSet(index) {
+  if (!invite.value || !myRole.value || regenerating.value >= 0 || !previewing.value) return
+  const member = gameState.value[myRole.value].finalTeam?.[index]
+  if (!member) return
+  regenerating.value = index
+  try {
+    const used = new Set(
+      (gameState.value[myRole.value].sets || [])
+        .filter((_, slot) => slot !== index)
+        .map((set) => set.item?.slug)
+        .filter(Boolean),
+    )
+    const set = await generateSet(member.pokemonId || member.slug, { usedItems: used })
+    set.fromId = member.fromId
+    const result = await updateInvite(invite.value.id, {
+      game_state: withOneSet(parseGameState(invite.value), myRole.value, index, set),
+    })
+    if (result.success) invite.value = result.invite
+    else startersError.value = result.message
+  } catch (error) {
+    startersError.value = error.message || 'Impossible de regénérer ce set.'
+  }
+  regenerating.value = -1
+}
+
+async function startBattle() {
+  if (!invite.value || launchingBattle.value || !bothSetsReady(gameState.value)) return
+  if (gameState.value.battle?.status === 'running' || gameState.value.battle?.status === 'done') return
+  launchingBattle.value = true
+  const seed = makeSeed()
+  try {
+    const typeChart = typeChartRef.value || (await loadTypeChart())
+    typeChartRef.value = typeChart
+    const started = await updateInvite(invite.value.id, {
+      game_state: withBattleProgress(parseGameState(invite.value), {
+        seed,
+        status: 'running',
+        played: 0,
+        progress: 0,
+        minBattles: 40,
+        maxBattles: 300,
+      }),
+    })
+    if (started.success) invite.value = started.invite
+    const hostName = gameState.value.host.playerName || 'host'
+    const guestName = gameState.value.guest.playerName || 'guest'
+    const results = await runBattleCampaign(
+      {
+        hostSets: gameState.value.host.sets,
+        guestSets: gameState.value.guest.sets,
+        hostName,
+        guestName,
+        seed,
+        typeChart,
+      },
+      (progress) => {
+        invite.value = {
+          ...invite.value,
+          game_state: withBattleProgress(parseGameState(invite.value), {
+            seed,
+            status: 'running',
+            played: progress.played || 0,
+            hostWins: progress.hostWins,
+            guestWins: progress.guestWins,
+            ties: progress.ties,
+            interval: progress.interval,
+            minBattles: progress.minBattles,
+            maxBattles: progress.maxBattles,
+            progress: progress.progress || 0,
+          }),
+        }
+      },
+    )
+    const finished = await updateInvite(invite.value.id, {
+      game_state: withBattleResults(parseGameState(invite.value), {
+        ...results,
+        seed,
+        status: 'done',
+        progress: 100,
+      }),
+    })
+    if (finished.success) invite.value = finished.invite
+    else startersError.value = finished.message
+    const saved = await saveMatchBattleResults({ inviteId: invite.value.id }, results)
+    if (!saved.success) startersError.value = saved.message
+  } catch (error) {
+    startersError.value = error.message || 'La simulation a échoué.'
+  }
+  launchingBattle.value = false
+}
+
 async function selectPokemon(entry) {
   loadingDetails.value = true
   detailsError.value = ''
@@ -680,32 +962,61 @@ onUnmounted(() => {
     </StarterDraw>
     <p v-else-if="dealing" class="friend-banner">Préparation de la manche…</p>
 
-    <section v-if="gameOver" class="draw-result" aria-labelledby="teams-title">
-      <h3 id="teams-title">Les 6 Pokémon choisis</h3>
-      <p class="dex-desc">Seules ces équipes sont conservées.</p>
-      <div class="teams">
-        <div>
-          <h4>Pour toi · {{ mySavedName }}</h4>
-          <ul>
-            <li v-for="item in myTeam" :key="`me-${item.id}`">
-              <img :src="starterArtworkUrl(item.id)" :alt="item.fr || item.en" />
-              <span>{{ item.fr || item.en }}</span>
-            </li>
-          </ul>
-        </div>
-        <div>
-          <h4>Pour {{ friendName }}</h4>
-          <ul>
-            <li v-for="item in theirTeam" :key="`them-${item.id}`">
-              <img :src="starterArtworkUrl(item.id)" :alt="item.fr || item.en" />
-              <span>{{ item.fr || item.en }}</span>
-            </li>
-          </ul>
-        </div>
-      </div>
+    <EvolutionChoice
+      v-if="evolving || waitingForCombat"
+      :slots="evoSlots"
+      :saving="savingEvo"
+      :waiting-friend="myFinalsReady && !bothFinalsChosen(gameState)"
+      @choose="chooseEvolution"
+    />
+    <section
+      v-if="(evolving || waitingForCombat) && theirFinalDisplay.length"
+      class="draw-result"
+      aria-labelledby="friend-finals-title"
+    >
+      <h3 id="friend-finals-title">Équipe de {{ friendName }}</h3>
+      <p class="dex-desc">Évolutions finales, mises à jour dès que ton ami a choisi.</p>
+      <ul class="friend-finals">
+        <li v-for="(item, index) in theirFinalDisplay" :key="`them-final-${item.id}-${index}`">
+          <img :src="starterArtworkUrl(item.id)" :alt="item.name" />
+          <span>{{ item.name }}</span>
+          <small v-if="item.pending">En attente</small>
+        </li>
+      </ul>
     </section>
+    <p v-if="generatingSets || (evolving && bothFinalsChosen(gameState) && !bothSetsReady(gameState))" class="friend-banner">
+      Préparation des sets de combat…
+    </p>
 
-    <section v-if="!showDraw" class="dex" aria-labelledby="dex-title">
+    <div v-if="previewing || battling || gameOver" class="recap-wrap">
+      <TeamSetRecap
+        :title="`Ton équipe · ${mySavedName}`"
+        :sets="mySets"
+        :can-regen="previewing"
+        :regenerating="regenerating"
+        @regen="regenSet"
+      />
+      <TeamSetRecap :title="`Équipe de ${friendName}`" :sets="theirSets" />
+      <button
+        v-if="previewing"
+        type="button"
+        class="start-btn"
+        :disabled="launchingBattle || !bothSetsReady(gameState)"
+        @click="startBattle"
+      >
+        {{ launchingBattle ? 'Lancement…' : 'Lancer le combat' }}
+      </button>
+    </div>
+
+    <BattleResults
+      v-if="battling || gameOver"
+      :battle="gameState.battle"
+      :host-name="gameState.host.playerName || 'Hôte'"
+      :guest-name="gameState.guest.playerName || 'Invité'"
+      :running="launchingBattle || gameState.battle?.status === 'running'"
+    />
+
+    <section v-if="!showDraw && !combatFlow" class="dex" aria-labelledby="dex-title">
       <h3 id="dex-title">Pokédex</h3>
       <p class="dex-desc">
         Recherche n’importe quel Pokémon par nom français, nom anglais ou numéro.
@@ -811,6 +1122,16 @@ h2 {
   font-weight: 600;
 }
 
+.recap-wrap {
+  display: grid;
+  gap: 1rem;
+}
+
+.recap-wrap {
+  display: grid;
+  gap: 1rem;
+}
+
 .name-card,
 .draw-result {
   background: var(--surface);
@@ -849,9 +1170,33 @@ h2 {
   padding: 0.35rem 0.55rem;
 }
 
-.teams img {
+.teams img,
+.friend-finals img {
   width: 40px;
   height: 40px;
+}
+
+.friend-finals {
+  list-style: none;
+  margin: 0.9rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.friend-finals li {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  background: var(--surface-muted);
+  border-radius: 12px;
+  padding: 0.35rem 0.55rem;
+}
+
+.friend-finals small {
+  margin-left: auto;
+  color: var(--text-soft);
+  font-size: 0.75rem;
 }
 
 .dex {
@@ -906,6 +1251,11 @@ h3 {
 
 .start-btn {
   width: 100%;
+}
+
+.draw-result .start-btn,
+.recap-wrap .start-btn {
+  margin-top: 1rem;
 }
 
 .flags-wait {

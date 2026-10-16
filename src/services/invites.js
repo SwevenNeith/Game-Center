@@ -1,7 +1,14 @@
 import { supabase } from '../supabase.js'
 import { getDeviceId, getLocalDeviceName } from './device.js'
 import { resolveStartersByIds } from './pokeapi.js'
-import { endGameState, GAME_DURATION_MS, isEnded, parseGameState } from './starterAveugle.js'
+import {
+  bothFinalsChosen,
+  endGameState,
+  GAME_DURATION_MS,
+  isEnded,
+  parseGameState,
+  TOTAL_ROUNDS,
+} from './starterAveugle.js'
 
 const SESSION_KEY = 'gamecenter.active-invite'
 
@@ -21,16 +28,24 @@ function normalizeCode(raw) {
     .replace(/[^A-Z0-9]/g, '')
 }
 
+function errorText(error) {
+  return [error?.message, error?.details, error?.hint, error?.code].filter(Boolean).join(' ')
+}
+
 function mapInviteError(error) {
   const message = error?.message || 'Erreur inconnue.'
+  const blob = errorText(error)
+  if (error?.code === 'PGRST204' || /battle_results/i.test(blob)) {
+    return 'Colonne battle_results absente. Lance le script SQL game_matches_battle_results dans Supabase.'
+  }
   if (
     error?.code === 'PGRST205' ||
-    /could not find the table/i.test(message) ||
-    /schema cache/i.test(message)
+    /could not find the table/i.test(blob) ||
+    (/schema cache/i.test(blob) && !/column/i.test(blob))
   ) {
     return 'Table des invitations absente. Lance le script SQL game_invites dans Supabase.'
   }
-  if (/game_state|host_pick|guest_pick|game_matches|PGRST204/i.test(message) || error?.code === 'PGRST204') {
+  if (/game_state|host_pick|guest_pick|game_matches/i.test(blob)) {
     return 'Colonnes de partie absentes. Lance le script SQL game_invites_starters dans Supabase.'
   }
   return message
@@ -44,7 +59,7 @@ export function isInviteExpired(invite) {
 export function isActiveGame(invite) {
   if (!invite || isInviteExpired(invite)) return false
   const status = parseGameState(invite).status
-  return status !== 'done' && status !== 'ended'
+  return status !== 'ended'
 }
 
 export function rememberGameSession(gameId, invite) {
@@ -78,6 +93,18 @@ export function resumeSummary(invite) {
   }
   if (state.status === 'info') {
     return friend ? `Préparation avec ${friend}` : 'Choix des informations'
+  }
+  if (state.status === 'teams') {
+    return friend ? `Équipes prêtes contre ${friend}` : 'Équipes prêtes'
+  }
+  if (state.status === 'evolve') {
+    return friend ? `Évolutions contre ${friend}` : 'Évolutions finales'
+  }
+  if (state.status === 'preview' || state.status === 'battle') {
+    return friend ? `Combat contre ${friend}` : 'Combat'
+  }
+  if (state.status === 'done') {
+    return friend ? `Résultat contre ${friend}` : 'Résultat du combat'
   }
   return friend ? `En cours avec ${friend}` : 'Partie en cours'
 }
@@ -126,9 +153,26 @@ function teamRecords(index, ids) {
   }))
 }
 
+function finalTeamRecords(index, originalIds, finalTeam) {
+  return teamRecords(index, originalIds).map((item, slot) => {
+    const chosen = finalTeam?.[slot]
+    if (!chosen?.pokemonId) return item
+    return {
+      id: chosen.pokemonId,
+      pokemonId: chosen.pokemonId,
+      fromId: chosen.fromId || item.id,
+      slug: chosen.slug || item.slug,
+      fr: chosen.name || item.fr,
+      en: item.en || '',
+    }
+  })
+}
+
 export async function saveCompletedMatch(invite, index) {
   const state = parseGameState(invite)
-  if (state.status !== 'done' || state.matchSaved) {
+  const teamsReady =
+    (state.host?.team || []).length >= TOTAL_ROUNDS && (state.guest?.team || []).length >= TOTAL_ROUNDS
+  if (!teamsReady || state.matchSaved || state.status === 'ended') {
     return { success: true, skipped: true }
   }
 
@@ -146,6 +190,35 @@ export async function saveCompletedMatch(invite, index) {
   const next = { ...state, matchSaved: true }
   const updated = await updateInvite(invite.id, { game_state: next })
   return updated.success ? { success: true, invite: updated.invite } : updated
+}
+
+export async function saveMatchFinalTeams(invite, index) {
+  const state = parseGameState(invite)
+  if (!invite?.id || !bothFinalsChosen(state)) return { success: true, skipped: true }
+
+  const { error } = await supabase
+    .from('game_matches')
+    .update({
+      host_team: finalTeamRecords(index, state.host.team, state.host.finalTeam),
+      guest_team: finalTeamRecords(index, state.guest.team, state.guest.finalTeam),
+    })
+    .eq('invite_id', invite.id)
+
+  if (error) return { success: false, message: mapInviteError(error) }
+  return { success: true }
+}
+
+export async function deleteMatch(matchId) {
+  if (!matchId) return { success: false, message: 'Confrontation introuvable.' }
+  const { error } = await supabase.from('game_matches').delete().eq('id', matchId)
+  if (error) return { success: false, message: mapInviteError(error) }
+  return { success: true }
+}
+
+export async function deleteAllMatches(gameId = STARTER_GAME_ID) {
+  const { error } = await supabase.from('game_matches').delete().eq('game_id', gameId)
+  if (error) return { success: false, message: mapInviteError(error) }
+  return { success: true }
 }
 
 export async function endInvite(invite) {
@@ -190,14 +263,60 @@ export async function fetchActiveInviteForDevice(gameId = STARTER_GAME_ID) {
   return { success: true, invite }
 }
 
-export async function fetchMatchHistory(gameId = STARTER_GAME_ID) {
-  const { data, error } = await supabase
-    .from('game_matches')
-    .select('id, host_name, guest_name, host_team, guest_team, created_at')
-    .eq('game_id', gameId)
-    .order('created_at', { ascending: false })
-    .limit(40)
+export function compactBattleResults(results) {
+  if (!results || typeof results !== 'object') return null
+  return {
+    played: results.played || 0,
+    hostWins: results.hostWins || 0,
+    guestWins: results.guestWins || 0,
+    ties: results.ties || 0,
+    avgTurns: results.avgTurns || 0,
+    interval: results.interval || null,
+    verdict: results.verdict || '',
+    hostWinRate: results.hostWinRate ?? 0,
+    guestWinRate: results.guestWinRate ?? 0,
+    hostStats: results.hostStats || [],
+    guestStats: results.guestStats || [],
+    hostMvp: results.hostMvp || null,
+    guestMvp: results.guestMvp || null,
+    recaps: results.recaps || null,
+    status: 'done',
+    progress: 100,
+    savedAt: new Date().toISOString(),
+  }
+}
 
+export async function saveMatchBattleResults({ matchId, inviteId } = {}, results) {
+  const payload = compactBattleResults(results)
+  if (!payload || (!matchId && !inviteId)) return { success: true, skipped: true }
+
+  let query = supabase.from('game_matches').update({ battle_results: payload })
+  query = matchId ? query.eq('id', matchId) : query.eq('invite_id', inviteId)
+  const { error } = await query
+  if (error) return { success: false, message: mapInviteError(error) }
+  return { success: true, results: payload }
+}
+
+export async function fetchMatchHistory(gameId = STARTER_GAME_ID) {
+  const query = () =>
+    supabase
+      .from('game_matches')
+      .select('id, host_name, guest_name, host_team, guest_team, battle_results, created_at')
+      .eq('game_id', gameId)
+      .order('created_at', { ascending: false })
+      .limit(40)
+
+  let { data, error } = await query()
+  if (error && (error.code === 'PGRST204' || /battle_results/i.test(errorText(error)))) {
+    const fallback = await supabase
+      .from('game_matches')
+      .select('id, host_name, guest_name, host_team, guest_team, created_at')
+      .eq('game_id', gameId)
+      .order('created_at', { ascending: false })
+      .limit(40)
+    data = fallback.data
+    error = fallback.error
+  }
   if (error) return { success: false, message: mapInviteError(error), matches: [] }
   return { success: true, matches: data || [] }
 }

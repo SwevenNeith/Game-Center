@@ -1,6 +1,14 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { fetchMatchHistory, STARTER_GAME_ID } from '../services/invites.js'
+import BattleResults from './BattleResults.vue'
+import { replaySavedTeams, resolveTeamForDisplay } from '../services/battle/index.js'
+import {
+  deleteAllMatches,
+  deleteMatch,
+  fetchMatchHistory,
+  saveMatchBattleResults,
+  STARTER_GAME_ID,
+} from '../services/invites.js'
 import { starterArtworkUrl } from '../services/pokeapi.js'
 
 const props = defineProps({
@@ -11,6 +19,11 @@ const open = ref(false)
 const loading = ref(false)
 const errorMessage = ref('')
 const matches = ref([])
+const runningId = ref(null)
+const progressById = ref({})
+const resultsById = ref({})
+const confirmingId = ref(null)
+const deleting = ref(false)
 
 const hasMatches = computed(() => matches.value.length > 0)
 
@@ -33,21 +46,122 @@ function pokemonLabel(item) {
   return item?.fr || item?.en || `#${item?.id || '?'}`
 }
 
+async function rerunCombat(match) {
+  if (!match?.id || runningId.value) return
+  runningId.value = match.id
+  progressById.value = {
+    ...progressById.value,
+    [match.id]: { status: 'running', played: 0, progress: 0, maxBattles: 300 },
+  }
+  const nextResults = { ...resultsById.value }
+  delete nextResults[match.id]
+  resultsById.value = nextResults
+  try {
+    const results = await replaySavedTeams({
+      hostTeam: teamList(match.host_team),
+      guestTeam: teamList(match.guest_team),
+      hostName: match.host_name || 'Hôte',
+      guestName: match.guest_name || 'Invité',
+      onProgress: (progress) => {
+        const played = progress.played || 0
+        progressById.value = {
+          ...progressById.value,
+          [match.id]: {
+            status: 'running',
+            played,
+            hostWins: progress.hostWins,
+            guestWins: progress.guestWins,
+            ties: progress.ties,
+            interval: progress.interval,
+            minBattles: progress.minBattles,
+            maxBattles: progress.maxBattles,
+            progress: progress.progress || 0,
+          },
+        }
+      },
+    })
+    const saved = await saveMatchBattleResults({ matchId: match.id }, results)
+    const stored = saved.success ? saved.results || results : { ...results, status: 'done' }
+    resultsById.value = { ...resultsById.value, [match.id]: stored }
+    matches.value = matches.value.map((row) =>
+      row.id === match.id ? { ...row, battle_results: stored } : row,
+    )
+    progressById.value = { ...progressById.value, [match.id]: null }
+    if (!saved.success) errorMessage.value = saved.message
+  } catch (error) {
+    progressById.value = {
+      ...progressById.value,
+      [match.id]: { error: error.message || 'Impossible de relancer ce combat.' },
+    }
+  }
+  runningId.value = null
+}
+
 async function loadHistory() {
   loading.value = true
   errorMessage.value = ''
+  confirmingId.value = null
   const result = await fetchMatchHistory(props.gameId)
-  loading.value = false
   if (!result.success) {
+    loading.value = false
     errorMessage.value = result.message
     matches.value = []
     return
   }
-  matches.value = result.matches
+  const resolved = await Promise.all(
+    (result.matches || []).map(async (match) => ({
+      ...match,
+      finalsSaved: teamList(match.host_team).some((item) => item.fromId || item.pokemonId),
+      host_team: await resolveTeamForDisplay(match.host_team),
+      guest_team: await resolveTeamForDisplay(match.guest_team),
+    })),
+  )
+  matches.value = resolved
+  resultsById.value = Object.fromEntries(
+    resolved.filter((match) => match.battle_results).map((match) => [match.id, match.battle_results]),
+  )
+  loading.value = false
+}
+
+function askDelete(id) {
+  if (runningId.value || deleting.value) return
+  confirmingId.value = confirmingId.value === id ? null : id
+}
+
+async function confirmDeleteMatch(match) {
+  if (!match?.id || runningId.value === match.id || deleting.value) return
+  deleting.value = true
+  const result = await deleteMatch(match.id)
+  deleting.value = false
+  confirmingId.value = null
+  if (!result.success) {
+    errorMessage.value = result.message
+    return
+  }
+  matches.value = matches.value.filter((row) => row.id !== match.id)
+  const nextResults = { ...resultsById.value }
+  delete nextResults[match.id]
+  resultsById.value = nextResults
+}
+
+async function confirmDeleteAll() {
+  if (runningId.value || deleting.value || !matches.value.length) return
+  deleting.value = true
+  const result = await deleteAllMatches(props.gameId)
+  deleting.value = false
+  confirmingId.value = null
+  if (!result.success) {
+    errorMessage.value = result.message
+    return
+  }
+  matches.value = []
+  resultsById.value = {}
+  progressById.value = {}
 }
 
 function close() {
   open.value = false
+  confirmingId.value = null
 }
 
 async function toggle() {
@@ -95,7 +209,18 @@ onUnmounted(() => {
               <p class="kicker">Archives</p>
               <h3 id="history-title">Face à face</h3>
             </div>
-            <button type="button" class="close-btn" aria-label="Fermer l’historique" @click="close">
+            <div class="dialog-actions">
+              <button
+                v-if="hasMatches"
+                type="button"
+                class="purge-btn"
+                :class="{ 'purge-btn--on': confirmingId === 'all' }"
+                :disabled="Boolean(runningId) || deleting"
+                @click="confirmingId === 'all' ? confirmDeleteAll() : askDelete('all')"
+              >
+                {{ confirmingId === 'all' ? 'Confirmer tout supprimer' : 'Tout supprimer' }}
+              </button>
+              <button type="button" class="close-btn" aria-label="Fermer l’historique" @click="close">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path
                   fill="currentColor"
@@ -103,6 +228,7 @@ onUnmounted(() => {
                 />
               </svg>
             </button>
+            </div>
           </header>
 
           <p v-if="loading" class="hint">Chargement des archives…</p>
@@ -111,7 +237,19 @@ onUnmounted(() => {
 
           <ul v-else class="arenas">
             <li v-for="match in matches" :key="match.id" class="arena">
-              <p class="arena-date">{{ formatDate(match.created_at) }}</p>
+              <div class="arena-top">
+                <p class="arena-date">{{ formatDate(match.created_at) }}</p>
+                <button
+                  type="button"
+                  class="row-del"
+                  :class="{ 'row-del--on': confirmingId === match.id }"
+                  :disabled="Boolean(runningId) || deleting"
+                  :aria-label="confirmingId === match.id ? 'Confirmer la suppression' : 'Supprimer cette confrontation'"
+                  @click="confirmingId === match.id ? confirmDeleteMatch(match) : askDelete(match.id)"
+                >
+                  {{ confirmingId === match.id ? 'Confirmer' : 'Supprimer' }}
+                </button>
+              </div>
               <div class="arena-grid">
                 <article class="side">
                   <p class="side-role">Hôte</p>
@@ -145,6 +283,29 @@ onUnmounted(() => {
                   </ul>
                 </article>
               </div>
+              <button
+                type="button"
+                class="replay-btn"
+                :disabled="Boolean(runningId)"
+                @click="rerunCombat(match)"
+              >
+                {{ runningId === match.id ? 'Relance…' : 'Relancer le combat' }}
+              </button>
+              <p class="replay-hint">
+                {{
+                  match.finalsSaved
+                    ? 'Évolutions telles que choisies en partie.'
+                    : 'Évolutions finales (forme de base s’il y a plusieurs choix).'
+                }}
+              </p>
+              <BattleResults
+                v-if="progressById[match.id] || resultsById[match.id]"
+                :title-id="`history-results-${match.id}`"
+                :battle="resultsById[match.id] || progressById[match.id]"
+                :host-name="match.host_name || 'Hôte'"
+                :guest-name="match.guest_name || 'Invité'"
+                :running="runningId === match.id"
+              />
             </li>
           </ul>
         </section>
@@ -198,7 +359,7 @@ onUnmounted(() => {
 }
 
 .dialog {
-  width: min(640px, 100%);
+  width: min(720px, 100%);
   max-height: min(86vh, 820px);
   overflow: auto;
   background:
@@ -217,6 +378,47 @@ onUnmounted(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
+}
+
+.dialog-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.purge-btn,
+.row-del {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.purge-btn {
+  min-height: 44px;
+  border-radius: 14px;
+  padding: 0 0.85rem;
+  font-size: 0.82rem;
+}
+
+.row-del {
+  min-height: 32px;
+  border-radius: 10px;
+  padding: 0 0.65rem;
+  font-size: 0.74rem;
+}
+
+.purge-btn--on,
+.row-del--on {
+  background: #8a3d32;
+  border-color: #8a3d32;
+  color: var(--cream);
+}
+
+.purge-btn:disabled,
+.row-del:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .kicker {
@@ -261,9 +463,16 @@ h3 {
   box-shadow: inset 0 1px 0 color-mix(in srgb, white 55%, transparent);
 }
 
+.arena-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+
 .arena-date {
-  margin: 0 0 0.45rem;
-  text-align: center;
+  margin: 0;
   font-size: 0.74rem;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -321,6 +530,30 @@ h3 {
   max-width: 44px;
   height: 44px;
   object-fit: contain;
+}
+
+.replay-btn {
+  width: 100%;
+  margin-top: 0.75rem;
+  border: none;
+  border-radius: 12px;
+  min-height: 44px;
+  padding: 0 1rem;
+  background: var(--teal);
+  color: var(--cream);
+  font-weight: 700;
+}
+
+.replay-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.replay-hint {
+  margin: 0.4rem 0 0;
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--text-soft);
 }
 
 .vs {

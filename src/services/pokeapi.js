@@ -685,6 +685,7 @@ export function isExcludedStarterForm(slug) {
   return EXCLUDED_FORM.test(String(slug || ''))
 }
 
+/** Toutes les générations ; exclus : Méga, Primo (primal) et Gigamax. */
 export function eligibleStarterSpecies(index = memory.index || []) {
   return index.filter((item) => item?.id && !isExcludedStarterForm(item.slug))
 }

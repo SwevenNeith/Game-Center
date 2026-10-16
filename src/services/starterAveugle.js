@@ -40,6 +40,33 @@ function emptyPlayer() {
     team: [],
     lieId: null,
     lieUnderId: null,
+    finalTeam: [],
+    sets: [],
+  }
+}
+
+export function emptyBattle() {
+  return {
+    seed: null,
+    status: '',
+    played: 0,
+    hostWins: 0,
+    guestWins: 0,
+    ties: 0,
+    avgTurns: 0,
+    interval: null,
+    verdict: '',
+    hostWinRate: 0,
+    guestWinRate: 0,
+    hostStats: [],
+    guestStats: [],
+    hostMvp: null,
+    guestMvp: null,
+    recaps: null,
+    error: '',
+    progress: 0,
+    minBattles: 40,
+    maxBattles: 300,
   }
 }
 
@@ -52,6 +79,7 @@ export function emptyGameState() {
     matchSaved: false,
     host: emptyPlayer(),
     guest: emptyPlayer(),
+    battle: emptyBattle(),
   }
 }
 
@@ -67,6 +95,7 @@ export function parseGameState(invite) {
     matchSaved: Boolean(raw.matchSaved),
     host: { ...emptyPlayer(), ...(raw.host || {}) },
     guest: { ...emptyPlayer(), ...(raw.guest || {}) },
+    battle: { ...emptyBattle(), ...(raw.battle || {}) },
   }
 }
 
@@ -170,7 +199,7 @@ export function completeRound(state, hostPick, guestPick, index) {
   clearLies(next)
 
   if (next.round >= TOTAL_ROUNDS) {
-    next.status = 'done'
+    next.status = 'evolve'
     return next
   }
 
@@ -180,4 +209,86 @@ export function completeRound(state, hostPick, guestPick, index) {
 
 export function playerNameFromState(state, role) {
   return state?.[role]?.playerName?.trim() || ''
+}
+
+export function isTeamsPhase(state) {
+  return state?.status === 'teams'
+}
+
+export function isEvolve(state) {
+  return state?.status === 'evolve'
+}
+
+export function startCombatState(state) {
+  const next = cloneState(state)
+  if (next.status === 'teams') next.status = 'evolve'
+  return next
+}
+
+export function isPreview(state) {
+  return state?.status === 'preview'
+}
+
+export function isBattle(state) {
+  return state?.status === 'battle'
+}
+
+export function teamsComplete(state) {
+  return (state?.host?.team || []).length >= TOTAL_ROUNDS && (state?.guest?.team || []).length >= TOTAL_ROUNDS
+}
+
+export function finalsReady(player) {
+  return (player?.finalTeam || []).filter(Boolean).length >= TOTAL_ROUNDS
+}
+
+export function bothFinalsChosen(state) {
+  return finalsReady(state?.host) && finalsReady(state?.guest)
+}
+
+export function bothSetsReady(state) {
+  return (state?.host?.sets || []).length >= TOTAL_ROUNDS && (state?.guest?.sets || []).length >= TOTAL_ROUNDS
+}
+
+export function withFinalTeam(state, role, finalTeam) {
+  const next = cloneState(state)
+  next[role].finalTeam = finalTeam
+  return next
+}
+
+export function withFinalChoice(state, role, index, choice) {
+  const next = cloneState(state)
+  const team = Array.from({ length: TOTAL_ROUNDS }, (_, slot) => next[role].finalTeam?.[slot] || null)
+  team[index] = choice
+  next[role].finalTeam = team
+  return next
+}
+
+export function withTeamSets(state, hostSets, guestSets) {
+  const next = cloneState(state)
+  if (hostSets) next.host.sets = hostSets
+  if (guestSets) next.guest.sets = guestSets
+  if (bothSetsReady(next)) next.status = 'preview'
+  return next
+}
+
+export function withOneSet(state, role, index, set) {
+  const next = cloneState(state)
+  const sets = [...(next[role].sets || [])]
+  sets[index] = set
+  next[role].sets = sets
+  return next
+}
+
+export function withBattleProgress(state, battle) {
+  const next = cloneState(state)
+  next.status = 'battle'
+  next.battle = { ...emptyBattle(), ...(next.battle || {}), ...battle }
+  return next
+}
+
+export function withBattleResults(state, results) {
+  const next = cloneState(state)
+  next.status = 'done'
+  next.battle = { ...emptyBattle(), ...(next.battle || {}), ...results, status: 'done' }
+  return next
 }
