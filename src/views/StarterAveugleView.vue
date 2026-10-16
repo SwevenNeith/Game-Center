@@ -29,7 +29,6 @@ import {
   STARTER_GAME_ID,
   updateInvite,
 } from '../services/invites.js'
-import { testerNotificationPush } from '../services/notifications.js'
 import {
   fillFrenchNames,
   getPokemonDetails,
@@ -633,20 +632,6 @@ watch(
 )
 
 watch(
-  () => gameState.value.battle?.status,
-  (status, previous) => {
-    if (status !== 'done' || previous !== 'running' || launchingBattle.value) return
-    const { title, body } = battleNotice(gameState.value.battle, gameState.value)
-    try {
-      if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
-      new Notification(title, { body })
-    } catch {
-      // l’écran affiche déjà le résultat
-    }
-  },
-)
-
-watch(
   () => [evolving.value, waitingForCombat.value, myTeam.value.map((item) => item.id).join(',')].join('|'),
   async () => {
     if ((!evolving.value && !waitingForCombat.value) || !myRole.value) return
@@ -758,28 +743,6 @@ async function regenSet(index) {
   regenerating.value = -1
 }
 
-function battleNotice(results, state) {
-  const hostName = state?.host?.playerName || 'Hôte'
-  const guestName = state?.guest?.playerName || 'Invité'
-  const hostPct = Math.round((Number(results?.hostWinRate) || 0) * 1000) / 10
-  const guestPct = Math.round((Number(results?.guestWinRate) || 0) * 1000) / 10
-  if (results?.verdict === 'host') {
-    return { title: `${hostName} l’emporte`, body: `${hostPct} % de victoire contre ${guestName}` }
-  }
-  if (results?.verdict === 'guest') {
-    return { title: `${guestName} l’emporte`, body: `${guestPct} % de victoire contre ${hostName}` }
-  }
-  return {
-    title: 'Combat simulé terminé',
-    body: `Équilibré — ${hostName} ${hostPct} % / ${guestName} ${guestPct} %`,
-  }
-}
-
-async function notifyBattleOver(results) {
-  const { title, body } = battleNotice(results, parseGameState(invite.value))
-  await testerNotificationPush({ title, body })
-}
-
 async function startBattle() {
   if (!invite.value || launchingBattle.value || !bothSetsReady(gameState.value)) return
   launchingBattle.value = true
@@ -850,7 +813,6 @@ async function startBattle() {
     else startersError.value = finished.message
     const saved = await saveMatchBattleResults({ inviteId: invite.value.id }, results)
     if (!saved.success) startersError.value = saved.message
-    await notifyBattleOver(results)
   } catch (error) {
     startersError.value = error.message || 'La simulation a échoué.'
     if (invite.value) {
