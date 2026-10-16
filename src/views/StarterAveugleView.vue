@@ -786,7 +786,9 @@ async function startBattle() {
   try {
     const current = await latestInvite(invite.value)
     const currentState = parseGameState(current)
-    if (currentState.battle?.status === 'running' || currentState.battle?.status === 'done') {
+    const battleStatus = currentState.battle?.status
+    const alreadyMoving = battleStatus === 'running' && Number(currentState.battle?.played) > 0
+    if (battleStatus === 'done' || alreadyMoving) {
       if (current) invite.value = current
       return
     }
@@ -851,6 +853,17 @@ async function startBattle() {
     await notifyBattleOver(results)
   } catch (error) {
     startersError.value = error.message || 'La simulation a échoué.'
+    if (invite.value) {
+      const failed = await updateInvite(invite.value.id, {
+        game_state: withBattleProgress(parseGameState(invite.value), {
+          status: '',
+          error: startersError.value,
+          played: 0,
+          progress: 0,
+        }),
+      })
+      if (failed.success) invite.value = failed.invite
+    }
   }
   launchingBattle.value = false
 }

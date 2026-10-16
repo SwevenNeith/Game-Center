@@ -45,6 +45,14 @@ function ensureWorker() {
   }
 }
 
+function toPlainData(value) {
+  try {
+    return JSON.parse(JSON.stringify(value))
+  } catch {
+    throw new Error('Données de combat non transmissibles au simulateur.')
+  }
+}
+
 export async function runBattleCampaign(payload, onProgress) {
   if (campaignBusy) {
     throw new Error('Une simulation est déjà en cours.')
@@ -52,16 +60,22 @@ export async function runBattleCampaign(payload, onProgress) {
   campaignBusy = true
   try {
     const host = ensureWorker()
+    const plain = toPlainData(payload)
     if (host) {
       const id = nextId
       nextId += 1
       return await new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject, onProgress })
-        host.postMessage({ type: 'run', id, payload })
+        try {
+          host.postMessage({ type: 'run', id, payload: plain })
+        } catch (error) {
+          pending.delete(id)
+          reject(error instanceof Error ? error : new Error(String(error)))
+        }
       })
     }
     const { runSimulations } = await import('./simulate.js')
-    return await runSimulations(payload, onProgress)
+    return await runSimulations(plain, onProgress)
   } finally {
     campaignBusy = false
   }
