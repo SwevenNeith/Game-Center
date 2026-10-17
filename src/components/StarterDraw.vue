@@ -1,4 +1,5 @@
 <script setup>
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import PokemonPreviewInfo from './PokemonPreviewInfo.vue'
 import { starterArtworkUrl } from '../services/pokeapi.js'
 import { TOTAL_ROUNDS } from '../services/starterAveugle.js'
@@ -20,32 +21,75 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['pick', 'start-lie', 'place-lie'])
+const focusedId = ref(null)
+const pendingId = ref(null)
+
+const pendingPokemon = computed(
+  () => props.pokemon.find((item) => Number(item.id) === Number(pendingId.value)) || null,
+)
+
+watch(
+  () => [props.pickedId, props.pokemon.map((item) => item.id).join(',')].join('|'),
+  () => {
+    pendingId.value = null
+  },
+)
 
 function pokeName(item) {
   if (!item) return '…'
   return props.detailsById[item.id]?.name || item.fr || item.en || `#${item.id}`
 }
 
-function canSelect() {
+function canPick() {
   return !props.disabled && !props.waiting && !props.pickedId
 }
 
+function highlightedId(id) {
+  return Number(props.pickedId || pendingId.value || focusedId.value) === Number(id)
+}
+
 function onCardClick(id, event) {
-  if (event?.target?.closest('button.cry-btn, audio, a')) return
+  if (event?.target?.closest('button, audio, a')) return
   if (props.assigningLie) {
     emit('place-lie', id)
     return
   }
-  if (!canSelect()) return
+  focusedId.value = id
+}
+
+function askPick(id) {
+  if (!canPick()) return
+  focusedId.value = id
+  pendingId.value = id
+}
+
+function cancelPick() {
+  pendingId.value = null
+}
+
+function submitPick() {
+  const id = pendingId.value
+  if (!canPick() || !id) return
+  pendingId.value = null
   emit('pick', id)
 }
+
+function onKeydown(event) {
+  if (event.key === 'Escape' && pendingId.value) cancelPick()
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
   <section class="draw" aria-labelledby="draw-title">
     <p class="draw-round">Manche {{ round }} / {{ TOTAL_ROUNDS }}</p>
     <h3 id="draw-title">Voici les propositions pour {{ friendName }}</h3>
-    <p class="draw-desc">Touche un Pokémon pour l’ajouter à son équipe. Sans méga, primo-forme ni Gigamax.</p>
+    <p class="draw-desc">
+      Regarde les 3 propositions, puis valide avec <strong>Je prends celui-là</strong> pour éviter un clic
+      trop rapide. Sans méga, primo-forme ni Gigamax.
+    </p>
     <p v-if="assigningLie" class="draw-hint draw-hint--lie">
       Sélectionne l’un des 3 Pokémon : le mensonge s’affichera en dessous, en rouge. Tu ne pourras pas le choisir pour l’équipe.
     </p>
@@ -57,7 +101,7 @@ function onCardClick(id, event) {
         <article
           class="pick-card"
           :class="{
-            'pick-card--selected': pickedId === item.id,
+            'pick-card--selected': highlightedId(item.id),
             'pick-card--target': assigningLie,
             'pick-card--locked': !assigningLie && (disabled || waiting || Boolean(pickedId)) && pickedId !== item.id,
           }"
@@ -66,6 +110,15 @@ function onCardClick(id, event) {
           <img :src="starterArtworkUrl(item.id)" :alt="pokeName(item)" />
           <p class="pick-name">{{ pokeName(item) }}</p>
           <PokemonPreviewInfo :pokemon="detailsById[item.id]" :flags="flags" />
+          <button
+            v-if="!assigningLie && !pickedId"
+            type="button"
+            class="confirm-btn"
+            :disabled="disabled || waiting"
+            @click.stop="askPick(item.id)"
+          >
+            Je prends celui-là
+          </button>
         </article>
 
         <article
@@ -97,6 +150,36 @@ function onCardClick(id, event) {
     <p v-if="pickedId && waiting" class="draw-hint">
       Choix envoyé. En attente de {{ friendName }}…
     </p>
+
+    <Teleport to="body">
+      <div
+        v-if="pendingPokemon"
+        class="pick-modal"
+        role="presentation"
+        @click.self="cancelPick"
+      >
+        <div
+          class="pick-modal__box"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="pick-modal-title"
+        >
+          <h4 id="pick-modal-title">Tu es sûr ?</h4>
+          <img :src="starterArtworkUrl(pendingPokemon.id)" :alt="pokeName(pendingPokemon)" />
+          <p class="pick-modal__name">{{ pokeName(pendingPokemon) }}</p>
+          <p class="pick-modal__text">
+            Tu vas ajouter <strong>{{ pokeName(pendingPokemon) }}</strong> à l’équipe de
+            {{ friendName }}.
+          </p>
+          <div class="pick-modal__actions">
+            <button type="button" class="confirm-btn confirm-btn--modal" @click="submitPick">
+              Oui, je prends {{ pokeName(pendingPokemon) }}
+            </button>
+            <button type="button" class="cancel-btn" @click="cancelPick">Annuler</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </section>
 </template>
 
@@ -206,6 +289,85 @@ h3 {
   word-break: break-word;
 }
 
+.confirm-btn {
+  width: 100%;
+  margin-top: 0.75rem;
+  border: none;
+  border-radius: 14px;
+  min-height: 48px;
+  padding: 0.55rem 0.8rem;
+  background: var(--teal);
+  color: var(--cream);
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.pick-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 1.1rem;
+  background: color-mix(in srgb, var(--ink) 52%, transparent);
+}
+
+.pick-modal__box {
+  width: min(26rem, 100%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  padding: 1.2rem 1.15rem 1.25rem;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.pick-modal__box h4 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 1.45rem;
+}
+
+.pick-modal__box img {
+  display: block;
+  margin: 0.85rem auto 0;
+  width: min(100%, 180px);
+  height: 160px;
+  object-fit: contain;
+}
+
+.pick-modal__name {
+  margin: 0.2rem 0 0;
+  font-size: 1.35rem;
+  font-weight: 800;
+}
+
+.pick-modal__text {
+  margin: 0.45rem 0 0;
+  color: var(--text-soft);
+}
+
+.pick-modal__actions {
+  margin-top: 0.95rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.confirm-btn--modal {
+  margin-top: 0;
+}
+
+.cancel-btn {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  min-height: 44px;
+  padding: 0.45rem 0.8rem;
+  background: var(--surface-muted);
+  color: var(--ink);
+  font-weight: 700;
+}
+
 .lie-tag {
   margin: 0 0 0.35rem;
   font-size: 0.68rem;
@@ -250,6 +412,11 @@ h3 {
 
   .pick-name {
     font-size: 1.15rem;
+  }
+
+  .confirm-btn {
+    min-height: 52px;
+    font-size: 1.05rem;
   }
 }
 </style>
