@@ -321,13 +321,24 @@ function combineWeaknesses(types) {
 }
 
 function collectFlavorGroups(entries) {
-  const grouped = new Map()
+  const byVersion = new Map()
   for (const entry of entries || []) {
-    if (entry.language?.name !== 'fr') continue
+    const lang = entry.language?.name
+    const version = entry.version?.name
+    if (!version || (lang !== 'fr' && lang !== 'en')) continue
     const text = cleanText(entry.flavor_text)
     if (!text) continue
+    const current = byVersion.get(version) || {}
+    current[lang] = text
+    byVersion.set(version, current)
+  }
+
+  const grouped = new Map()
+  for (const [version, texts] of byVersion) {
+    const text = texts.fr || texts.en
+    if (!text) continue
     if (!grouped.has(text)) grouped.set(text, [])
-    grouped.get(text).push(entry.version?.name)
+    grouped.get(text).push(version)
   }
   return [...grouped.entries()].map(([text, versions]) => ({
     text,
@@ -681,13 +692,26 @@ export async function fillFrenchNames() {
 
 const EXCLUDED_FORM = /-(mega|gmax|gigantamax|primal)(-|$)/i
 
+/** Catégorie « Pokémon Paradoxe » (Paldea). */
+export const PARADOX_SPECIES_IDS = new Set([
+  984, 985, 986, 987, 988, 989, 990, 991, 992, 993, 994, 995, 1005, 1006, 1007, 1008, 1009, 1010, 1020, 1021, 1022,
+  1023,
+])
+
 export function isExcludedStarterForm(slug) {
   return EXCLUDED_FORM.test(String(slug || ''))
 }
 
-/** Toutes les générations ; exclus : Méga, Primo (primal) et Gigamax. */
+export function isParadoxPokemon(item) {
+  const id = Number(item?.id ?? item)
+  if (PARADOX_SPECIES_IDS.has(id)) return true
+  const genus = String(item?.genus || '').toLowerCase()
+  return genus.includes('paradoxe') || genus.includes('paradox pokemon')
+}
+
+/** Toutes les générations ; exclus : Méga, Primo, Gigamax et Paradoxe. */
 export function eligibleStarterSpecies(index = memory.index || []) {
-  return index.filter((item) => item?.id && !isExcludedStarterForm(item.slug))
+  return index.filter((item) => item?.id && !isExcludedStarterForm(item.slug) && !isParadoxPokemon(item))
 }
 
 export function pickRandomStarters(index, count = 3, excludeIds = []) {

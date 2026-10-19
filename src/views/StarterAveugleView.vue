@@ -49,11 +49,13 @@ import {
 import {
   bothFinalsChosen,
   bothSetsReady,
+  clearPlayerLie,
   completeRound,
   dealRound,
   defaultInfoFlags,
   emptyGameState,
   finalsReady,
+  GAME_DURATION_MS,
   isBattle,
   isEnded,
   isEvolve,
@@ -63,6 +65,7 @@ import {
   isTeamsPhase,
   needsDeal,
   parseGameState,
+  restartGameState,
   startCombatState,
   teamsComplete,
   withBattleProgress,
@@ -108,6 +111,7 @@ const pendingAutoEvo = ref(false)
 const generatingSets = ref(false)
 const regenerating = ref(-1)
 const launchingBattle = ref(false)
+const restarting = ref(false)
 const typeChartRef = ref(null)
 let searchTimer = null
 let skipNextSearch = false
@@ -452,7 +456,7 @@ function resetLieSearch() {
 }
 
 function startLieSearch() {
-  if (myPick.value || myLie.value) return
+  if (myPick.value) return
   lieError.value = ''
   assigningLie.value = false
   pendingLie.value = null
@@ -460,6 +464,22 @@ function startLieSearch() {
   selected.value = null
   suggestions.value = []
   lieSearchOpen.value = true
+}
+
+async function changeLie() {
+  if (myPick.value || !invite.value || !myRole.value) return
+  if (myLie.value) {
+    const latest = await latestInvite(invite.value)
+    const result = await updateInvite(latest.id, {
+      game_state: clearPlayerLie(parseGameState(latest), myRole.value),
+    })
+    if (result.success) invite.value = result.invite
+    else {
+      startersError.value = result.message
+      return
+    }
+  }
+  startLieSearch()
 }
 
 function chooseAsLie() {
@@ -585,6 +605,17 @@ watch(invite, (next) => {
   if (next && isActiveGame(next)) rememberGameSession(STARTER_GAME_ID, next)
   else forgetGameSession(STARTER_GAME_ID)
 })
+
+watch(
+  () => gameState.value.status,
+  (status, prev) => {
+    if (prev === 'done' && status === 'info') {
+      evoByFromId.value = {}
+      resetLieSearch()
+      launchingBattle.value = false
+    }
+  },
+)
 
 watch(query, (value) => {
   if (skipNextSearch) {
@@ -830,6 +861,33 @@ async function startBattle() {
   launchingBattle.value = false
 }
 
+async function restartMatch() {
+  if (!invite.value || restarting.value || gameState.value.status !== 'done') return
+  restarting.value = true
+  startersError.value = ''
+  try {
+    const current = await latestInvite(invite.value)
+    const state = parseGameState(current)
+    if (state.status !== 'done') return
+    const result = await updateInvite(current.id, {
+      game_state: restartGameState(state),
+      host_pick: null,
+      guest_pick: null,
+      expires_at: new Date(Date.now() + GAME_DURATION_MS).toISOString(),
+    })
+    if (result.success) {
+      evoByFromId.value = {}
+      resetLieSearch()
+      applyInvite(result.invite)
+    } else {
+      startersError.value = result.message
+    }
+  } catch (error) {
+    startersError.value = error.message || 'Impossible de relancer une partie.'
+  }
+  restarting.value = false
+}
+
 async function selectPokemon(entry) {
   loadingDetails.value = true
   detailsError.value = ''
@@ -977,6 +1035,8 @@ onUnmounted(() => {
       @pick="pickForFriend"
       @start-lie="startLieSearch"
       @place-lie="placeLie"
+      @change-lie="changeLie"
+      @cancel-lie="resetLieSearch"
     >
       <template #lie-search>
         <p class="dex-desc">Cherche un Pokémon différent des 3 propositions, puis choisis-le comme mensonge.</p>
@@ -1060,6 +1120,15 @@ onUnmounted(() => {
       :guest-name="gameState.guest.playerName || 'Invité'"
       :running="launchingBattle || gameState.battle?.status === 'running'"
     />
+    <button
+      v-if="gameOver"
+      type="button"
+      class="start-btn"
+      :disabled="restarting"
+      @click="restartMatch"
+    >
+      {{ restarting ? 'Nouvelle partie…' : 'Refaire une partie' }}
+    </button>
 
     <section v-if="!showDraw && !combatFlow" class="dex" aria-labelledby="dex-title">
       <h3 id="dex-title">Pokédex</h3>

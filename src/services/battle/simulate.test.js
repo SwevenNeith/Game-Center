@@ -55,6 +55,10 @@ describe('simulation complète', () => {
     assert.ok(['host', 'guest', 'tie'].includes(battle.winner))
     assert.ok(battle.turns > 0)
     assert.ok(battle.recap.length > 3)
+    const damage =
+      battle.hostStats.reduce((sum, row) => sum + row.damage, 0) +
+      battle.guestStats.reduce((sum, row) => sum + row.damage, 0)
+    assert.ok(damage > 0)
   })
 
   it('enchaîne 40 combats 6v6 en quelques secondes', async () => {

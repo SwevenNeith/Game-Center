@@ -176,6 +176,8 @@ export async function saveCompletedMatch(invite, index) {
     return { success: true, skipped: true }
   }
 
+  await supabase.from('game_matches').update({ invite_id: null }).eq('invite_id', invite.id)
+
   const { error } = await supabase.from('game_matches').insert({
     game_id: invite.game_id || STARTER_GAME_ID,
     invite_id: invite.id,

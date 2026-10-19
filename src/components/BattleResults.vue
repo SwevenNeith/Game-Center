@@ -60,10 +60,6 @@ const barPct = computed(() => {
         <li>{{ battle.played }} simulations</li>
         <li>{{ hostName }} : {{ pct(battle.hostWinRate) }}</li>
         <li>{{ guestName }} : {{ pct(battle.guestWinRate) }}</li>
-        <li v-if="battle.interval">
-          IC 95 % :
-          {{ pct(battle.interval.lo) }} – {{ pct(battle.interval.hi) }}
-        </li>
         <li>Durée moyenne : {{ battle.avgTurns }} tours</li>
         <li>Nuls : {{ battle.ties }}</li>
       </ul>
@@ -74,7 +70,7 @@ const barPct = computed(() => {
           <p v-if="battle.hostMvp" class="mvp">MVP : {{ battle.hostMvp.name }}</p>
           <ul class="poke-stats">
             <li v-for="row in battle.hostStats" :key="row.species">
-              {{ row.name }} · KO {{ row.kos }} · sorties {{ row.sent }} · dégâts {{ Math.round(row.damage) }}
+              {{ row.name }} · KO {{ row.kos }} · dégâts {{ Math.round(row.damage) }}
             </li>
           </ul>
         </div>
@@ -83,7 +79,7 @@ const barPct = computed(() => {
           <p v-if="battle.guestMvp" class="mvp">MVP : {{ battle.guestMvp.name }}</p>
           <ul class="poke-stats">
             <li v-for="row in battle.guestStats" :key="row.species">
-              {{ row.name }} · KO {{ row.kos }} · sorties {{ row.sent }} · dégâts {{ Math.round(row.damage) }}
+              {{ row.name }} · KO {{ row.kos }} · dégâts {{ Math.round(row.damage) }}
             </li>
           </ul>
         </div>

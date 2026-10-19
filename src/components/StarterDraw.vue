@@ -20,7 +20,7 @@ const props = defineProps({
   assigningLie: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['pick', 'start-lie', 'place-lie'])
+const emit = defineEmits(['pick', 'start-lie', 'place-lie', 'change-lie', 'cancel-lie'])
 const focusedId = ref(null)
 const pendingId = ref(null)
 
@@ -130,6 +130,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           <img :src="starterArtworkUrl(lie.id)" :alt="pokeName(lie)" />
           <p class="pick-name">{{ pokeName(lie) }}</p>
           <PokemonPreviewInfo :pokemon="detailsById[lie.id]" :flags="flags" />
+          <button
+            v-if="!pickedId"
+            type="button"
+            class="lie-change"
+            @click.stop="emit('change-lie')"
+          >
+            Changer ce mensonge
+          </button>
         </article>
       </li>
     </ul>
@@ -141,6 +149,22 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       @click="emit('start-lie')"
     >
       Choisir un mensonge
+    </button>
+    <button
+      v-else-if="lie && !pickedId && !searchingLie && !assigningLie"
+      type="button"
+      class="lie-btn lie-btn--change"
+      @click="emit('change-lie')"
+    >
+      Changer le mensonge
+    </button>
+    <button
+      v-else-if="assigningLie && !pickedId"
+      type="button"
+      class="lie-btn lie-btn--change"
+      @click="emit('cancel-lie')"
+    >
+      Annuler le mensonge
     </button>
 
     <div v-if="searchingLie && !lie" class="lie-search">
@@ -386,6 +410,22 @@ h3 {
   padding: 0 1rem;
   background: color-mix(in srgb, #8a3d32 86%, var(--ink));
   color: var(--cream);
+  font-weight: 700;
+}
+
+.lie-btn--change,
+.lie-change {
+  background: var(--surface-muted);
+  color: var(--ink);
+  border: 1px solid color-mix(in srgb, #8a3d32 45%, var(--border));
+}
+
+.lie-change {
+  width: 100%;
+  margin-top: 0.7rem;
+  border-radius: 12px;
+  min-height: 40px;
+  padding: 0 0.75rem;
   font-weight: 700;
 }
 

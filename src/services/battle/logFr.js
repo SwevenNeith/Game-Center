@@ -4,7 +4,7 @@ function nameOf(sets, ident, fallback) {
   const nick = String(ident || '').split(': ').pop()
   const found =
     (sets || []).find((set) => set.species === nick || set.name === nick) ||
-    (sets || []).find((set) => toID(set.species) === toID(nick))
+    (sets || []).find((set) => toID(set.species) === toID(nick) || toID(set.slug) === toID(nick) || toID(set.name) === toID(nick))
   return found?.name || fallback || nick
 }
 
@@ -17,6 +17,38 @@ function moveName(sets, move, ident) {
     if (match) return match.name
   }
   return move
+}
+
+function identKey(side, ident) {
+  const nick = String(ident || '').split(': ').pop()
+  return `${side}:${toID(nick)}`
+}
+
+function parseHpStatus(raw) {
+  const text = String(raw || '').trim()
+  if (!text) return null
+  if (/^fnt\b/i.test(text) || /^0\b.*\bfnt\b/i.test(text)) {
+    return { hp: 0, max: null, fainted: true }
+  }
+  const frac = text.match(/^(\d+)\s*\/\s*(\d+)/)
+  if (frac) {
+    const hp = Number(frac[1])
+    const max = Number(frac[2])
+    return { hp, max, fainted: hp <= 0 || /\bfnt\b/i.test(text) }
+  }
+  return null
+}
+
+function findStatRow(stats, ident, species) {
+  const keys = [ident, species]
+    .filter(Boolean)
+    .map((value) => toID(String(value).split(': ').pop()))
+  return (
+    stats.find((item) => keys.includes(toID(item.species))) ||
+    stats.find((item) => keys.includes(toID(item.slug))) ||
+    stats.find((item) => keys.includes(toID(item.name))) ||
+    null
+  )
 }
 
 export function parseBattleLog(rawLog, { hostSets, guestSets, keepEvents = true } = {}) {
@@ -45,10 +77,8 @@ export function parseBattleLog(rawLog, { hostSets, guestSets, keepEvents = true 
   let lastAttacker = null
 
   const statsOf = (side) => (side === 'p1' ? hostStats : guestStats)
-  const bump = (side, species, field, amount = 1) => {
-    const row =
-      statsOf(side).find((item) => item.species === species) ||
-      statsOf(side).find((item) => toID(item.species) === toID(species))
+  const bump = (side, ident, field, amount = 1, species = '') => {
+    const row = findStatRow(statsOf(side), ident, species)
     if (row) row[field] += amount
   }
 
@@ -57,19 +87,21 @@ export function parseBattleLog(rawLog, { hostSets, guestSets, keepEvents = true 
       turns = Number(line.slice(6)) || turns + 1
       continue
     }
-    const switchMatch = line.match(/\|switch\|(p[12])a: ([^|]+)\|([^,|]+)\|(\d+)\/(\d+)/)
+    const switchMatch = line.match(/\|(?:switch|drag)\|(p[12])a: ([^|]+)\|([^|]+)\|([^|]*)/)
     if (switchMatch) {
       const side = switchMatch[1]
-      const species = switchMatch[3].trim()
-      const ident = `${side}a`
-      hp[ident] = Number(switchMatch[4])
-      maxHp[ident] = Number(switchMatch[5])
-      bump(side, species, 'sent')
+      const ident = switchMatch[2]
+      const species = switchMatch[3].split(',')[0].trim()
+      const parsed = parseHpStatus(switchMatch[4])
+      const key = identKey(side, ident)
+      if (parsed?.max) maxHp[key] = parsed.max
+      hp[key] = parsed?.hp ?? parsed?.max ?? hp[key] ?? 0
+      bump(side, ident, 'sent', 1, species)
       if (keepEvents) {
         const sets = side === 'p1' ? hostSets : guestSets
         events.push({
           kind: 'switch',
-          text: `${nameOf(sets, switchMatch[2], species)} entre en combat.`,
+          text: `${nameOf(sets, ident, species)} entre en combat.`,
           turn: turns,
         })
       }
@@ -88,43 +120,50 @@ export function parseBattleLog(rawLog, { hostSets, guestSets, keepEvents = true 
       }
       continue
     }
-    const dmg = line.match(/\|-damage\|(p[12])a: ([^|]+)\|(\d+)\/(\d+)/)
+    const dmg = line.match(/\|-damage\|(p[12])a: ([^|]+)\|([^|]+)/)
     if (dmg) {
-      const ident = `${dmg[1]}a`
-      const next = Number(dmg[3])
-      const max = Number(dmg[4])
-      const prev = hp[ident] ?? max
-      const lost = Math.max(0, prev - next)
-      const pct = max ? Math.round((lost / max) * 100) : 0
-      hp[ident] = next
-      maxHp[ident] = max
-      if (lastAttacker && lastAttacker.side !== dmg[1]) {
-        const atkSets = lastAttacker.side === 'p1' ? hostSets : guestSets
-        const species = String(lastAttacker.ident).split(': ').pop()
-        bump(lastAttacker.side, species, 'damage', lost)
-        void atkSets
-      }
-      if (keepEvents && pct > 0) {
-        events.push({
-          kind: 'damage',
-          text: `  → ${pct} % des PV.`,
-          turn: turns,
-        })
+      const side = dmg[1]
+      const ident = dmg[2]
+      const key = identKey(side, ident)
+      const parsed = parseHpStatus(dmg[3])
+      if (parsed) {
+        const prev = hp[key] ?? parsed.max ?? 0
+        const lost = parsed.fainted ? Math.max(0, prev) : Math.max(0, prev - parsed.hp)
+        if (parsed.max) maxHp[key] = parsed.max
+        hp[key] = parsed.hp
+        if (lastAttacker && lastAttacker.side !== side && lost > 0) {
+          bump(lastAttacker.side, lastAttacker.ident, 'damage', lost)
+        }
+        if (keepEvents && parsed.max && lost > 0) {
+          events.push({
+            kind: 'damage',
+            text: `  → ${Math.round((lost / parsed.max) * 100)} % des PV.`,
+            turn: turns,
+          })
+        }
       }
       continue
     }
     const faint = line.match(/\|faint\|(p[12])a: ([^|]+)/)
     if (faint) {
+      const side = faint[1]
+      const ident = faint[2]
+      const key = identKey(side, ident)
+      const remaining = hp[key] ?? 0
+      if (remaining > 0 && lastAttacker && lastAttacker.side !== side) {
+        bump(lastAttacker.side, lastAttacker.ident, 'damage', remaining)
+      }
+      hp[key] = 0
       if (keepEvents) {
-        const sets = faint[1] === 'p1' ? hostSets : guestSets
+        const sets = side === 'p1' ? hostSets : guestSets
         events.push({
           kind: 'faint',
-          text: `${nameOf(sets, faint[2])} est K.O.`,
+          text: `${nameOf(sets, ident)} est K.O.`,
           turn: turns,
         })
       }
-      if (lastAttacker && lastAttacker.side !== faint[1]) {
-        bump(lastAttacker.side, String(lastAttacker.ident).split(': ').pop(), 'kos')
+      if (lastAttacker && lastAttacker.side !== side) {
+        bump(lastAttacker.side, lastAttacker.ident, 'kos')
       }
       continue
     }

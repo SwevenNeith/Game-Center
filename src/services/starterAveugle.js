@@ -10,22 +10,13 @@ export const INFO_FIELDS = [
   { id: 'genus', label: 'Catégorie' },
   { id: 'types', label: 'Types' },
   { id: 'evolutionStatus', label: 'Statut d’évolution' },
-  { id: 'rarity', label: 'Rareté (bébé, légendaire, mythique)' },
   { id: 'size', label: 'Taille et poids' },
-  { id: 'baseExperience', label: 'Expérience de base' },
   { id: 'abilities', label: 'Talents' },
   { id: 'stats', label: 'Statistiques de base' },
-  { id: 'weaknesses', label: 'Faiblesses et résistances' },
   { id: 'generation', label: 'Génération' },
   { id: 'habitat', label: 'Habitat' },
   { id: 'color', label: 'Couleur' },
-  { id: 'growthRate', label: 'Croissance' },
   { id: 'eggGroups', label: 'Groupes d’œuf' },
-  { id: 'gender', label: 'Sexe' },
-  { id: 'captureRate', label: 'Taux de capture' },
-  { id: 'baseHappiness', label: 'Bonheur de base' },
-  { id: 'hatchSteps', label: 'Éclosion' },
-  { id: 'heldItems', label: 'Objets tenus' },
   { id: 'flavors', label: 'Descriptions du Pokédex' },
   { id: 'moves', label: 'Capacités par niveau' },
 ]
@@ -130,6 +121,23 @@ export function withLie(state, role, lieId, underId) {
   next[role].lieId = id
   next[role].lieUnderId = under
   next.seen = [...new Set([...(next.seen || []).map(Number), id])]
+  return next
+}
+
+export function clearPlayerLie(state, role) {
+  const next = cloneState(state)
+  if (!next[role]) return next
+  next[role].lieId = null
+  next[role].lieUnderId = null
+  return next
+}
+
+export function restartGameState(state) {
+  const next = emptyGameState()
+  next.status = 'info'
+  next.infoFlags = { ...defaultInfoFlags(), ...(state?.infoFlags || {}) }
+  next.host.playerName = state?.host?.playerName || ''
+  next.guest.playerName = state?.guest?.playerName || ''
   return next
 }
 

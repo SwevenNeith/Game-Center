@@ -9,22 +9,11 @@ defineProps({
 })
 
 const labels = Object.fromEntries(
-  INFO_FIELDS.map((field) => [
-    field.id,
-    field.id === 'rarity' ? 'Rareté' : field.id === 'stats' ? 'Statistiques' : field.id === 'weaknesses' ? 'Faiblesses' : field.label,
-  ]),
+  INFO_FIELDS.map((field) => [field.id, field.id === 'stats' ? 'Statistiques' : field.label]),
 )
 
 function typeStyle(type) {
   return { background: type.color, color: '#fff' }
-}
-
-function rarityText(pokemon) {
-  const bits = []
-  if (pokemon.isBaby) bits.push('Bébé')
-  if (pokemon.isLegendary) bits.push('Légendaire')
-  if (pokemon.isMythical) bits.push('Mythique')
-  return bits.length ? bits.join(', ') : 'Standard'
 }
 </script>
 
@@ -62,17 +51,9 @@ function rarityText(pokemon) {
       <span class="k">{{ labels.evolutionStatus }}</span>
       <span>{{ pokemon.evolutionStatus }}</span>
     </p>
-    <p v-if="flags.rarity" class="fact">
-      <span class="k">{{ labels.rarity }}</span>
-      <span>{{ rarityText(pokemon) }}</span>
-    </p>
     <p v-if="flags.size" class="fact">
       <span class="k">{{ labels.size }}</span>
       <span>{{ pokemon.heightM.toFixed(1) }} m · {{ pokemon.weightKg.toFixed(1) }} kg</span>
-    </p>
-    <p v-if="flags.baseExperience && pokemon.baseExperience" class="fact">
-      <span class="k">{{ labels.baseExperience }}</span>
-      <span>{{ pokemon.baseExperience }}</span>
     </p>
 
     <div v-if="flags.abilities && pokemon.abilities.length" class="fact fact--block">
@@ -96,17 +77,6 @@ function rarityText(pokemon) {
       </ul>
     </div>
 
-    <div v-if="flags.weaknesses" class="fact fact--block">
-      <span class="k">{{ labels.weaknesses }}</span>
-      <div class="matchups">
-        <p v-if="pokemon.weaknesses.x4.length">×4 : {{ pokemon.weaknesses.x4.map((t) => t.name).join(', ') }}</p>
-        <p v-if="pokemon.weaknesses.x2.length">×2 : {{ pokemon.weaknesses.x2.map((t) => t.name).join(', ') }}</p>
-        <p v-if="pokemon.weaknesses.x05.length">×½ : {{ pokemon.weaknesses.x05.map((t) => t.name).join(', ') }}</p>
-        <p v-if="pokemon.weaknesses.x025?.length">×¼ : {{ pokemon.weaknesses.x025.map((t) => t.name).join(', ') }}</p>
-        <p v-if="pokemon.weaknesses.x0.length">Immunisé : {{ pokemon.weaknesses.x0.map((t) => t.name).join(', ') }}</p>
-      </div>
-    </div>
-
     <p v-if="flags.generation && pokemon.generation" class="fact">
       <span class="k">{{ labels.generation }}</span>
       <span>{{ pokemon.generation }}</span>
@@ -119,40 +89,17 @@ function rarityText(pokemon) {
       <span class="k">{{ labels.color }}</span>
       <span>{{ pokemon.color }}</span>
     </p>
-    <p v-if="flags.growthRate && pokemon.growthRate" class="fact">
-      <span class="k">{{ labels.growthRate }}</span>
-      <span>{{ pokemon.growthRate }}</span>
-    </p>
     <p v-if="flags.eggGroups && pokemon.eggGroups.length" class="fact">
       <span class="k">{{ labels.eggGroups }}</span>
       <span>{{ pokemon.eggGroups.join(', ') }}</span>
     </p>
-    <p v-if="flags.gender" class="fact">
-      <span class="k">{{ labels.gender }}</span>
-      <span>{{ pokemon.gender }}</span>
-    </p>
-    <p v-if="flags.captureRate && pokemon.captureRate != null" class="fact">
-      <span class="k">{{ labels.captureRate }}</span>
-      <span>{{ pokemon.captureRate }}</span>
-    </p>
-    <p v-if="flags.baseHappiness && pokemon.baseHappiness != null" class="fact">
-      <span class="k">{{ labels.baseHappiness }}</span>
-      <span>{{ pokemon.baseHappiness }}</span>
-    </p>
-    <p v-if="flags.hatchSteps && pokemon.hatchSteps != null" class="fact">
-      <span class="k">{{ labels.hatchSteps }}</span>
-      <span>{{ pokemon.hatchSteps }} pas</span>
-    </p>
-    <p v-if="flags.heldItems && pokemon.heldItems.length" class="fact">
-      <span class="k">{{ labels.heldItems }}</span>
-      <span>{{ pokemon.heldItems.join(', ') }}</span>
-    </p>
 
-    <div v-if="flags.flavors && pokemon.flavors.length" class="fact fact--block">
+    <div v-if="flags.flavors && pokemon.flavors.length" class="fact fact--block fact--flavors">
       <span class="k">{{ labels.flavors }}</span>
-      <ul class="stack">
-        <li v-for="(entry, index) in pokemon.flavors.slice(0, 3)" :key="index" class="muted">
-          {{ entry.text }}
+      <ul class="stack flavors">
+        <li v-for="(entry, index) in pokemon.flavors" :key="index">
+          <p class="muted">{{ entry.text }}</p>
+          <p v-if="entry.versions?.length" class="versions">{{ entry.versions.join(' · ') }}</p>
         </li>
       </ul>
     </div>
@@ -199,15 +146,9 @@ function rarityText(pokemon) {
   content: ' :';
 }
 
-.muted,
-.matchups p {
+.muted {
   margin: 0;
   color: var(--text-soft);
-}
-
-.matchups {
-  display: grid;
-  gap: 0.12rem;
 }
 
 .chips,
@@ -249,5 +190,25 @@ function rarityText(pokemon) {
   color: var(--ink);
   font-size: 0.78rem;
   font-weight: 800;
+}
+
+.fact--flavors {
+  grid-template-columns: 1fr;
+}
+
+.flavors {
+  max-height: 14rem;
+  overflow: auto;
+  padding-right: 0.2rem;
+}
+
+.flavors p {
+  margin: 0;
+}
+
+.versions {
+  margin: 0.12rem 0 0;
+  font-size: 0.68rem;
+  color: var(--text-soft);
 }
 </style>

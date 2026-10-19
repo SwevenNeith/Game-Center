@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test src/services/battle/stats.test.js src/services/battle/results.test.js src/services/battle/showdownIds.test.js src/services/battle/ai.test.js src/services/battle/evolutions.test.js src/services/battle/simulate.test.js src/services/battle/starterAveugle-flow.test.js",
+    "test": "node --test src/services/battle/stats.test.js src/services/battle/results.test.js src/services/battle/logFr.test.js src/services/battle/showdownIds.test.js src/services/battle/ai.test.js src/services/battle/evolutions.test.js src/services/battle/simulate.test.js src/services/battle/starterAveugle-flow.test.js src/services/pokeapi.eligible.test.js",
     "test:sets": "node --test src/services/battle/validate-sets.test.js"
   },
   "dependencies": {

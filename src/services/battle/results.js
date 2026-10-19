@@ -55,7 +55,7 @@ export function mergePokemonStats(target, incoming) {
 
 export function pickMvp(stats = []) {
   if (!stats.length) return null
-  return [...stats].sort((a, b) => b.kos * 1000 + b.damage - (a.kos * 1000 + a.damage) || b.sent - a.sent)[0]
+  return [...stats].sort((a, b) => b.damage - a.damage || b.kos - a.kos || String(a.name).localeCompare(String(b.name)))[0]
 }
 
 export function closenessScore(battle) {
