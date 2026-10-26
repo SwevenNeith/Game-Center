@@ -1,24 +1,34 @@
 <script setup>
-import { STAT_LABELS } from '../services/pokeapi.js'
+import { computed } from 'vue'
+import { STAT_LABELS, starterArtworkUrl } from '../services/pokeapi.js'
 
-defineProps({
+const props = defineProps({
   pokemon: { type: Object, required: true },
+  compact: { type: Boolean, default: false },
 })
+
+defineEmits(['open'])
 
 function typeStyle(type) {
   return { background: type.color, color: '#fff' }
 }
+
+const hasMatchups = computed(() => {
+  const w = props.pokemon?.weaknesses
+  if (!w) return false
+  return ['x4', 'x2', 'x05', 'x025', 'x0'].some((key) => w[key]?.length)
+})
 </script>
 
 <template>
   <article class="fiche">
     <div class="fiche__hero">
-      <div class="arts">
+      <div class="arts" :class="{ 'arts--single': compact || !pokemon.shinyArtwork }">
         <figure v-if="pokemon.artwork">
           <img :src="pokemon.artwork" :alt="pokemon.name" />
-          <figcaption>Normal</figcaption>
+          <figcaption v-if="!compact">Normal</figcaption>
         </figure>
-        <figure v-if="pokemon.shinyArtwork">
+        <figure v-if="!compact && pokemon.shinyArtwork">
           <img :src="pokemon.shinyArtwork" :alt="`${pokemon.name} chromatique`" />
           <figcaption>Chromatique</figcaption>
         </figure>
@@ -28,28 +38,48 @@ function typeStyle(type) {
         <p class="num">#{{ String(pokemon.id).padStart(4, '0') }}</p>
         <h4>{{ pokemon.name }}</h4>
         <p class="english">{{ pokemon.englishName }}</p>
-        <p v-if="pokemon.genus" class="genus">{{ pokemon.genus }}</p>
+        <p class="genus">{{ pokemon.genus || '∅' }}</p>
 
         <ul class="chips">
           <li v-for="type in pokemon.types" :key="type.slug" class="chip chip--type" :style="typeStyle(type)">
             {{ type.name }}
           </li>
-          <li class="chip">{{ pokemon.evolutionStatus }}</li>
-          <li v-if="pokemon.isBaby" class="chip">Bébé</li>
-          <li v-if="pokemon.isLegendary" class="chip">Légendaire</li>
-          <li v-if="pokemon.isMythical" class="chip">Mythique</li>
+          <template v-if="!compact">
+            <li class="chip">{{ pokemon.evolutionStatus }}</li>
+            <li v-if="pokemon.isBaby" class="chip">Bébé</li>
+            <li v-if="pokemon.isLegendary" class="chip">Légendaire</li>
+            <li v-if="pokemon.isMythical" class="chip">Mythique</li>
+          </template>
         </ul>
 
-        <p class="measures">
+        <p v-if="!compact" class="measures">
           {{ pokemon.heightM.toFixed(1) }} m · {{ pokemon.weightKg.toFixed(1) }} kg
           <span v-if="pokemon.baseExperience"> · {{ pokemon.baseExperience }} exp. de base</span>
         </p>
 
-        <audio v-if="pokemon.cry" class="cry" controls preload="none" :src="pokemon.cry">
+        <audio v-if="!compact && pokemon.cry" class="cry" controls preload="none" :src="pokemon.cry">
           Cri de {{ pokemon.name }}
         </audio>
       </div>
     </div>
+
+    <section v-if="compact" class="block">
+      <h5>Formes</h5>
+      <ul v-if="pokemon.varieties?.length" class="forms">
+        <li v-for="form in pokemon.varieties" :key="form.slug || form.name">
+          <img
+            v-if="form.id"
+            :src="starterArtworkUrl(form.id)"
+            :alt="form.name"
+          />
+          <span>
+            {{ form.name }}
+            <small v-if="form.isDefault"> (défaut)</small>
+          </span>
+        </li>
+      </ul>
+      <p v-else class="muted">∅</p>
+    </section>
 
     <section v-if="pokemon.abilities.length" class="block">
       <h5>Talents</h5>
@@ -110,26 +140,45 @@ function typeStyle(type) {
             <span v-for="type in pokemon.weaknesses.x0" :key="type.slug" class="chip chip--type" :style="typeStyle(type)">{{ type.name }}</span>
           </dd>
         </div>
+        <p v-if="!hasMatchups" class="muted">∅</p>
       </dl>
     </section>
 
     <section class="block">
       <h5>Évolution</h5>
-      <p v-if="pokemon.evolvesFrom" class="muted">Évolue depuis {{ pokemon.evolvesFrom }}.</p>
-      <ol v-if="pokemon.evolution.length" class="evo">
+      <p v-if="!pokemon.evolution?.length" class="muted">∅</p>
+      <ol v-else class="evo">
         <li v-for="node in pokemon.evolution" :key="node.slug" :class="{ 'evo--current': node.isCurrent }">
-          <strong>#{{ String(node.id).padStart(4, '0') }} {{ node.name }}</strong>
-          <p v-if="node.how.length" class="muted">{{ node.how.join(' / ') }}</p>
+          <button
+            v-if="compact && !node.isCurrent && node.id"
+            type="button"
+            class="evo-btn"
+            @click="$emit('open', node.id)"
+          >
+            <img :src="starterArtworkUrl(node.id)" :alt="node.name" />
+            <span>
+              <strong>#{{ String(node.id).padStart(4, '0') }} {{ node.name }}</strong>
+              <small v-if="node.how.length">{{ node.how.join(' / ') }}</small>
+            </span>
+          </button>
+          <div v-else class="evo-static">
+            <img :src="starterArtworkUrl(node.id)" :alt="node.name" />
+            <span>
+              <strong>#{{ String(node.id).padStart(4, '0') }} {{ node.name }}</strong>
+              <small v-if="node.isCurrent">Pokémon actuel</small>
+              <small v-else-if="node.how.length">{{ node.how.join(' / ') }}</small>
+            </span>
+          </div>
         </li>
       </ol>
     </section>
 
-    <section class="block facts">
+    <section v-if="!compact" class="block facts">
       <h5>Données d’espèce</h5>
       <dl>
-        <div v-if="pokemon.generation"><dt>Génération</dt><dd>{{ pokemon.generation }}</dd></div>
-        <div v-if="pokemon.habitat"><dt>Habitat</dt><dd>{{ pokemon.habitat }}</dd></div>
-        <div v-if="pokemon.color"><dt>Couleur</dt><dd>{{ pokemon.color }}</dd></div>
+        <div><dt>Génération</dt><dd>{{ pokemon.generation || '∅' }}</dd></div>
+        <div><dt>Habitat</dt><dd>{{ pokemon.habitat || '∅' }}</dd></div>
+        <div><dt>Couleur</dt><dd>{{ pokemon.color || '∅' }}</dd></div>
         <div v-if="pokemon.growthRate"><dt>Croissance</dt><dd>{{ pokemon.growthRate }}</dd></div>
         <div v-if="pokemon.eggGroups.length"><dt>Groupes d’œuf</dt><dd>{{ pokemon.eggGroups.join(', ') }}</dd></div>
         <div><dt>Sexe</dt><dd>{{ pokemon.gender }}</dd></div>
@@ -140,7 +189,7 @@ function typeStyle(type) {
       </dl>
     </section>
 
-    <section v-if="pokemon.flavors.length" class="block">
+    <section v-if="!compact && pokemon.flavors.length" class="block">
       <h5>Descriptions du Pokédex</h5>
       <ul class="flavors">
         <li v-for="(entry, index) in pokemon.flavors" :key="index">
@@ -150,7 +199,7 @@ function typeStyle(type) {
       </ul>
     </section>
 
-    <section v-if="pokemon.moves.length" class="block">
+    <section v-if="!compact && pokemon.moves.length" class="block">
       <h5>Capacités apprises par niveau</h5>
       <div class="table-wrap">
         <table>
@@ -202,6 +251,10 @@ function typeStyle(type) {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.55rem;
+}
+
+.arts--single {
+  grid-template-columns: 1fr;
 }
 
 .arts figure {
@@ -299,6 +352,7 @@ h4 {
 .abilities,
 .flavors,
 .evo,
+.forms,
 .stats {
   list-style: none;
   margin: 0;
@@ -309,10 +363,63 @@ h4 {
 
 .abilities li,
 .flavors li,
-.evo li {
+.evo li,
+.forms li {
   background: var(--surface-muted);
   border-radius: 14px;
   padding: 0.7rem 0.8rem;
+}
+
+.forms li,
+.evo-btn,
+.evo-static {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  text-align: left;
+}
+
+.forms img,
+.evo-btn img,
+.evo-static img {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.evo-btn {
+  width: 100%;
+  min-height: 52px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.evo-btn strong,
+.evo-static strong,
+.forms span {
+  display: block;
+}
+
+.evo-btn small,
+.evo-static small,
+.forms small {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--text-soft);
+  font-size: 0.78rem;
+}
+
+.evo li {
+  padding: 0.45rem 0.55rem;
+}
+
+.evo--current {
+  outline: 2px solid color-mix(in srgb, var(--teal) 55%, white);
 }
 
 .abilities p,
@@ -374,10 +481,6 @@ h4 {
   margin: 0;
 }
 
-.evo--current {
-  outline: 2px solid color-mix(in srgb, var(--teal) 55%, white);
-}
-
 .facts dl {
   margin: 0;
   display: grid;
@@ -431,6 +534,11 @@ th {
   .fiche__hero,
   .arts {
     grid-template-columns: 1fr;
+  }
+
+  .evo-btn,
+  .evo-static {
+    min-height: 56px;
   }
 }
 </style>

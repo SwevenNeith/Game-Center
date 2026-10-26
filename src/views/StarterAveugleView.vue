@@ -7,8 +7,10 @@ import InfoFlagsPanel from '../components/InfoFlagsPanel.vue'
 import InviteFriendMenu from '../components/InviteFriendMenu.vue'
 import MatchHistoryMenu from '../components/MatchHistoryMenu.vue'
 import PokemonFiche from '../components/PokemonFiche.vue'
+import PokemonFicheModal from '../components/PokemonFicheModal.vue'
 import PokemonPreviewInfo from '../components/PokemonPreviewInfo.vue'
 import StarterDraw from '../components/StarterDraw.vue'
+import TeamPeekModal from '../components/TeamPeekModal.vue'
 import TeamSetRecap from '../components/TeamSetRecap.vue'
 import {
   fetchActiveInviteForDevice,
@@ -112,7 +114,13 @@ const generatingSets = ref(false)
 const regenerating = ref(-1)
 const launchingBattle = ref(false)
 const restarting = ref(false)
+const confirmingRestart = ref(false)
+const teamsOpen = ref(false)
+const inspectId = ref(null)
+const inspectError = ref('')
+const inspectLoading = ref(false)
 const typeChartRef = ref(null)
+let restartToken = 0
 let searchTimer = null
 let skipNextSearch = false
 let hostWriteChain = Promise.resolve()
@@ -184,12 +192,27 @@ const myLieUnderId = computed(() => {
   return id ? Number(id) : null
 })
 const detailsNeeded = computed(() => {
-  const ids = myProposals.value.map((item) => item.id)
+  const ids = [
+    ...myProposals.value.map((item) => item.id),
+    ...myTeam.value.map((item) => item.id),
+    ...theirTeam.value.map((item) => item.id),
+  ]
   if (myLie.value?.id) ids.push(myLie.value.id)
   if (pendingLie.value?.id) ids.push(pendingLie.value.id)
   if (selected.value?.id) ids.push(selected.value.id)
+  if (inspectId.value) ids.push(inspectId.value)
   return [...new Set(ids.filter(Boolean))]
 })
+const bothPlayersReady = computed(
+  () => Boolean(invite.value && gameState.value.host?.playerName && gameState.value.guest?.playerName),
+)
+const canRestartMatch = computed(
+  () => bothPlayersReady.value && !['naming', 'ended'].includes(gameState.value.status),
+)
+const canPeekTeams = computed(
+  () => Boolean(invite.value && myRole.value && gameState.value.status !== 'naming'),
+)
+const inspectPokemon = computed(() => (inspectId.value ? detailsById.value[inspectId.value] || null : null))
 const picking = computed(() => isPicking(gameState.value))
 const infoPhase = computed(() => Boolean(invite.value && isInfoPhase(gameState.value)))
 const showFlags = computed(
@@ -609,10 +632,13 @@ watch(invite, (next) => {
 watch(
   () => gameState.value.status,
   (status, prev) => {
-    if (prev === 'done' && status === 'info') {
+    if (status === 'info' && prev && prev !== 'info' && prev !== 'naming') {
       evoByFromId.value = {}
       resetLieSearch()
       launchingBattle.value = false
+      teamsOpen.value = false
+      inspectId.value = null
+      confirmingRestart.value = false
     }
   },
 )
@@ -777,6 +803,7 @@ async function regenSet(index) {
 async function startBattle() {
   if (!invite.value || launchingBattle.value || !bothSetsReady(gameState.value)) return
   launchingBattle.value = true
+  const token = restartToken
   try {
     const current = await latestInvite(invite.value)
     const currentState = parseGameState(current)
@@ -813,6 +840,7 @@ async function startBattle() {
         typeChart,
       },
       (progress) => {
+        if (token !== restartToken) return
         const nextState = withBattleProgress(parseGameState(invite.value), {
           seed,
           status: 'running',
@@ -832,6 +860,7 @@ async function startBattle() {
         updateInvite(invite.value.id, { game_state: nextState })
       },
     )
+    if (token !== restartToken) return
     const finished = await updateInvite(invite.value.id, {
       game_state: withBattleResults(parseGameState(invite.value), {
         ...results,
@@ -845,6 +874,7 @@ async function startBattle() {
     const saved = await saveMatchBattleResults({ inviteId: invite.value.id }, results)
     if (!saved.success) startersError.value = saved.message
   } catch (error) {
+    if (token !== restartToken) return
     startersError.value = error.message || 'La simulation a échoué.'
     if (invite.value) {
       const failed = await updateInvite(invite.value.id, {
@@ -857,18 +887,34 @@ async function startBattle() {
       })
       if (failed.success) invite.value = failed.invite
     }
+  } finally {
+    if (token === restartToken) launchingBattle.value = false
   }
-  launchingBattle.value = false
+}
+
+function askRestartMatch() {
+  if (!canRestartMatch.value || restarting.value) return
+  confirmingRestart.value = true
+}
+
+function cancelRestartMatch() {
+  confirmingRestart.value = false
 }
 
 async function restartMatch() {
-  if (!invite.value || restarting.value || gameState.value.status !== 'done') return
+  if (!invite.value || restarting.value || !canRestartMatch.value) return
+  confirmingRestart.value = false
   restarting.value = true
+  restartToken += 1
+  launchingBattle.value = false
   startersError.value = ''
   try {
     const current = await latestInvite(invite.value)
     const state = parseGameState(current)
-    if (state.status !== 'done') return
+    if (['naming', 'ended'].includes(state.status)) {
+      restarting.value = false
+      return
+    }
     const result = await updateInvite(current.id, {
       game_state: restartGameState(state),
       host_pick: null,
@@ -878,6 +924,8 @@ async function restartMatch() {
     if (result.success) {
       evoByFromId.value = {}
       resetLieSearch()
+      teamsOpen.value = false
+      inspectId.value = null
       applyInvite(result.invite)
     } else {
       startersError.value = result.message
@@ -886,6 +934,32 @@ async function restartMatch() {
     startersError.value = error.message || 'Impossible de relancer une partie.'
   }
   restarting.value = false
+}
+
+async function inspectPokemonById(id) {
+  const pokemonId = Number(id)
+  if (!pokemonId) return
+  inspectError.value = ''
+  if (!inspectId.value) inspectId.value = pokemonId
+  if (detailsById.value[pokemonId]) {
+    inspectId.value = pokemonId
+    return
+  }
+  inspectLoading.value = true
+  try {
+    const details = await getPokemonDetails(pokemonId)
+    detailsById.value = { ...detailsById.value, [pokemonId]: details }
+    inspectId.value = pokemonId
+  } catch (error) {
+    inspectError.value = error.message || 'Impossible de charger cette fiche.'
+  }
+  inspectLoading.value = false
+}
+
+function closeInspect() {
+  inspectId.value = null
+  inspectError.value = ''
+  inspectLoading.value = false
 }
 
 async function selectPokemon(entry) {
@@ -973,6 +1047,26 @@ onUnmounted(() => {
     <p v-if="endedNotice" class="friend-banner">{{ endedNotice }}</p>
     <p v-if="startersError" class="friend-banner friend-banner--error">{{ startersError }}</p>
 
+    <div v-if="canPeekTeams || canRestartMatch" class="match-tools">
+      <button
+        v-if="canPeekTeams"
+        type="button"
+        class="tool-btn"
+        @click="teamsOpen = true"
+      >
+        Voir les équipes
+      </button>
+      <button
+        v-if="canRestartMatch"
+        type="button"
+        class="tool-btn tool-btn--danger"
+        :disabled="restarting"
+        @click="askRestartMatch"
+      >
+        {{ restarting ? 'Nouvelle partie…' : 'Recommencer la partie' }}
+      </button>
+    </div>
+
     <section v-if="!mySavedName" class="name-card" aria-labelledby="name-title">
       <h3 id="name-title">Ton nom</h3>
       <p class="dex-desc">Il s’affichera chez ton ami comme joueur connecté.</p>
@@ -1037,6 +1131,7 @@ onUnmounted(() => {
       @place-lie="placeLie"
       @change-lie="changeLie"
       @cancel-lie="resetLieSearch"
+      @inspect="inspectPokemonById"
     >
       <template #lie-search>
         <p class="dex-desc">Cherche un Pokémon différent des 3 propositions, puis choisis-le comme mensonge.</p>
@@ -1082,12 +1177,14 @@ onUnmounted(() => {
       :saving="savingEvo"
       :waiting-friend="myFinalsReady && !bothFinalsChosen(gameState)"
       @choose="chooseEvolution"
+      @inspect="inspectPokemonById"
     />
     <EvolutionChoice
       v-if="(evolving || waitingForCombat) && theirEvoSlots.length"
       :title="`Équipe de ${friendName}`"
       :slots="theirEvoSlots"
       readonly
+      @inspect="inspectPokemonById"
     />
     <p v-if="generatingSets || (evolving && bothFinalsChosen(gameState) && !bothSetsReady(gameState))" class="friend-banner">
       Préparation des sets de combat…
@@ -1120,15 +1217,51 @@ onUnmounted(() => {
       :guest-name="gameState.guest.playerName || 'Invité'"
       :running="launchingBattle || gameState.battle?.status === 'running'"
     />
-    <button
-      v-if="gameOver"
-      type="button"
-      class="start-btn"
-      :disabled="restarting"
-      @click="restartMatch"
-    >
-      {{ restarting ? 'Nouvelle partie…' : 'Refaire une partie' }}
-    </button>
+    <TeamPeekModal
+      v-if="teamsOpen"
+      :my-name="mySavedName || 'Toi'"
+      :friend-name="friendName || 'Ami'"
+      :my-team="myTeam"
+      :their-team="theirTeam"
+      :details-by-id="detailsById"
+      @close="teamsOpen = false"
+      @inspect="inspectPokemonById"
+    />
+    <PokemonFicheModal
+      v-if="inspectId"
+      :pokemon="inspectPokemon"
+      :loading="inspectLoading"
+      :error="inspectError"
+      @close="closeInspect"
+      @open="inspectPokemonById"
+    />
+    <Teleport to="body">
+      <div
+        v-if="confirmingRestart"
+        class="confirm-sheet"
+        role="presentation"
+        @click.self="cancelRestartMatch"
+      >
+        <div
+          class="confirm-sheet__box"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="restart-title"
+        >
+          <h4 id="restart-title">Recommencer la partie ?</h4>
+          <p>
+            La partie en cours sera effacée. Vous reviendrez au choix des informations, avec les
+            mêmes joueurs et appareils.
+          </p>
+          <div class="confirm-sheet__actions">
+            <button type="button" class="start-btn" :disabled="restarting" @click="restartMatch">
+              Oui, recommencer
+            </button>
+            <button type="button" class="tool-btn" @click="cancelRestartMatch">Annuler</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <section v-if="!showDraw && !combatFlow" class="dex" aria-labelledby="dex-title">
       <h3 id="dex-title">Pokédex</h3>
@@ -1234,6 +1367,67 @@ h2 {
 .friend-banner--error {
   color: #8a3d32;
   font-weight: 600;
+}
+
+.match-tools {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.55rem;
+}
+
+.tool-btn {
+  width: 100%;
+  min-height: 44px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 700;
+  box-shadow: var(--shadow);
+}
+
+.tool-btn--danger {
+  background: color-mix(in srgb, #8a3d32 86%, var(--ink));
+  border-color: transparent;
+  color: var(--cream);
+}
+
+.confirm-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: grid;
+  place-items: center;
+  padding: 1.1rem;
+  background: color-mix(in srgb, var(--ink) 52%, transparent);
+}
+
+.confirm-sheet__box {
+  width: min(26rem, 100%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  padding: 1.2rem 1.15rem 1.25rem;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.confirm-sheet__box h4 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 1.4rem;
+}
+
+.confirm-sheet__box p {
+  margin: 0.55rem 0 0;
+  color: var(--text-soft);
+}
+
+.confirm-sheet__actions {
+  margin-top: 0.95rem;
+  display: grid;
+  gap: 0.5rem;
 }
 
 .recap-wrap {
@@ -1451,8 +1645,26 @@ h3 {
     flex-direction: column;
   }
 
+  .game-bar {
+    gap: 0.5rem;
+  }
+
+  .game-logo {
+    width: 40px;
+    height: 40px;
+  }
+
   .game-bar__titles h2 {
-    font-size: 1.25rem;
+    font-size: 1.2rem;
+  }
+
+  .match-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .tool-btn,
+  .confirm-sheet__actions .start-btn {
+    min-height: 48px;
   }
 
   .teams {

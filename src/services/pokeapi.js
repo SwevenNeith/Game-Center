@@ -88,6 +88,12 @@ function pickLocalizedName(entries, fallback) {
   return fr?.name || prettySlug(fallback)
 }
 
+function pickLocalizedGenus(entries) {
+  const fr = entries?.find((entry) => entry.language?.name === 'fr')
+  const en = entries?.find((entry) => entry.language?.name === 'en')
+  return cleanText(fr?.genus || en?.genus || '')
+}
+
 function cleanText(value) {
   return String(value || '')
     .replace(/\f/g, ' ')
@@ -589,7 +595,7 @@ export async function getPokemonDetails(idOrSlug) {
   )
 
   const frName = pickLocalizedName(species.names, pokemon.name)
-  const genus = pickLocalizedName(species.genera, '')
+  const genus = pickLocalizedGenus(species.genera)
   const artwork =
     pokemon.sprites?.other?.['official-artwork']?.front_default ||
     pokemon.sprites?.other?.home?.front_default ||
@@ -649,12 +655,17 @@ export async function getPokemonDetails(idOrSlug) {
     isMythical: species.is_mythical,
     evolutionStatus,
     evolvesFrom: species.evolves_from_species
-      ? nameFromIndex(species.evolves_from_species.name, speciesIdFromUrl(species.evolves_from_species.url))
+      ? {
+          id: speciesIdFromUrl(species.evolves_from_species.url),
+          name: nameFromIndex(species.evolves_from_species.name, speciesIdFromUrl(species.evolves_from_species.url)),
+        }
       : null,
     evolution,
     flavors,
     varieties: (species.varieties || []).map((entry) => ({
-      name: prettySlug(entry.pokemon.name),
+      id: idFromUrl(entry.pokemon?.url, 'pokemon'),
+      slug: entry.pokemon?.name || '',
+      name: prettySlug(entry.pokemon?.name),
       isDefault: entry.is_default,
     })),
     heldItems: heldItems.filter(Boolean),

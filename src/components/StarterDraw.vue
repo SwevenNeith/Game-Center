@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import PokedexLoupe from './PokedexLoupe.vue'
 import PokemonPreviewInfo from './PokemonPreviewInfo.vue'
 import { starterArtworkUrl } from '../services/pokeapi.js'
 import { TOTAL_ROUNDS } from '../services/starterAveugle.js'
@@ -20,7 +21,7 @@ const props = defineProps({
   assigningLie: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['pick', 'start-lie', 'place-lie', 'change-lie', 'cancel-lie'])
+const emit = defineEmits(['pick', 'start-lie', 'place-lie', 'change-lie', 'cancel-lie', 'inspect'])
 const focusedId = ref(null)
 const pendingId = ref(null)
 
@@ -107,6 +108,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           }"
           @click="onCardClick(item.id, $event)"
         >
+          <div class="pick-top">
+            <PokedexLoupe
+              :label="`Fiche de ${pokeName(item)}`"
+              @click="emit('inspect', item.id)"
+            />
+          </div>
           <img :src="starterArtworkUrl(item.id)" :alt="pokeName(item)" />
           <p class="pick-name">{{ pokeName(item) }}</p>
           <PokemonPreviewInfo :pokemon="detailsById[item.id]" :flags="flags" />
@@ -126,7 +133,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           class="pick-card pick-card--lie"
           aria-label="Pokémon mensonge"
         >
-          <p class="lie-tag">Mensonge</p>
+          <div class="pick-top">
+            <p class="lie-tag">Mensonge</p>
+            <PokedexLoupe
+              :label="`Fiche de ${pokeName(lie)}`"
+              @click="emit('inspect', lie.id)"
+            />
+          </div>
           <img :src="starterArtworkUrl(lie.id)" :alt="pokeName(lie)" />
           <p class="pick-name">{{ pokeName(lie) }}</p>
           <PokemonPreviewInfo :pokemon="detailsById[lie.id]" :flags="flags" />
@@ -262,6 +275,7 @@ h3 {
 }
 
 .pick-card {
+  position: relative;
   width: 100%;
   background: var(--surface-muted);
   border: 3px solid transparent;
@@ -270,6 +284,19 @@ h3 {
   text-align: center;
   min-height: 48px;
   cursor: pointer;
+}
+
+.pick-top {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 44px;
+  margin: -0.25rem -0.15rem 0.15rem;
+}
+
+.pick-card--lie .pick-top {
+  justify-content: space-between;
+  gap: 0.4rem;
 }
 
 .pick-card:hover:not(.pick-card--locked) {
@@ -393,7 +420,7 @@ h3 {
 }
 
 .lie-tag {
-  margin: 0 0 0.35rem;
+  margin: 0;
   font-size: 0.68rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;

@@ -1,5 +1,6 @@
 <script setup>
 import { reactive, watch } from 'vue'
+import PokedexLoupe from './PokedexLoupe.vue'
 import { starterArtworkUrl } from '../services/pokeapi.js'
 
 const props = defineProps({
@@ -10,7 +11,7 @@ const props = defineProps({
   readonly: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['choose'])
+const emit = defineEmits(['choose', 'inspect'])
 const pendingByIndex = reactive({})
 
 watch(
@@ -86,6 +87,12 @@ function confirmOption(slot) {
         <p v-if="slot.loading" class="hint">…</p>
         <p v-else-if="slot.error" class="error">!</p>
         <template v-else>
+          <div class="slot-top">
+            <PokedexLoupe
+              :label="`Fiche de ${displayName(slot)}`"
+              @click="emit('inspect', displayChoice(slot)?.pokemonId || slot.fromId)"
+            />
+          </div>
           <img :src="displayArt(slot)" :alt="displayName(slot)" />
           <span class="name">{{ displayName(slot) }}</span>
           <small v-if="slot.pending" class="pending">Attente</small>
@@ -170,6 +177,12 @@ h3 {
   align-content: start;
   gap: 0.28rem;
   text-align: center;
+}
+
+.slot-top {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
 }
 
 .evo-slot > img {

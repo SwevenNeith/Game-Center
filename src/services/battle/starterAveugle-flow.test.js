@@ -61,4 +61,19 @@ describe('relance et mensonge', () => {
     assert.deepEqual(next.host.team, [])
     assert.equal(next.battle.played, 0)
   })
+
+  it('efface aussi une partie encore en cours', () => {
+    const state = emptyGameState()
+    state.status = 'picking'
+    state.round = 3
+    state.host.playerName = 'Léa'
+    state.guest.playerName = 'Tom'
+    state.host.team = [1, 4]
+    state.guest.team = [7, 10]
+    const next = restartGameState(state)
+    assert.equal(next.status, 'info')
+    assert.equal(next.round, 1)
+    assert.deepEqual(next.host.team, [])
+    assert.deepEqual(next.guest.team, [])
+  })
 })
