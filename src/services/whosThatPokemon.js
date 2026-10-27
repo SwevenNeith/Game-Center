@@ -309,12 +309,42 @@ export function parseWhosThatResults(raw) {
   }
 }
 
+function pointsPhrase(value) {
+  const pts = Number(value) || 0
+  return `${pts} ${pts === 1 ? 'point' : 'points'}`
+}
+
 export function winnerLabel(results, hostName, guestName) {
   if (!results) return ''
   if (results.winner === 'solo' || results.guest?.pending) return 'Partie solo'
-  if (results.winner === 'host') return `${hostName} a gagné`
-  if (results.winner === 'guest') return `${guestName} a gagné`
-  return 'Égalité'
+  if (results.winner === 'host') {
+    return results.host?.points == null
+      ? `${hostName} l’emporte`
+      : `${hostName} l’emporte avec ${pointsPhrase(results.host.points)}`
+  }
+  if (results.winner === 'guest') {
+    return results.guest?.points == null
+      ? `${guestName} l’emporte`
+      : `${guestName} l’emporte avec ${pointsPhrase(results.guest.points)}`
+  }
+  if (results.host?.points == null) return 'Égalité'
+  return `Égalité · ${pointsPhrase(results.host.points)} partout`
+}
+
+export function officialPokemonName(round) {
+  const name = String(round?.name || '').trim()
+  if (name) return name
+  if (round?.ok && round?.guess) return String(round.guess).trim()
+  const id = Number(round?.id) || 0
+  return id ? `Pokémon n°${id}` : 'Pokémon'
+}
+
+export function playerAnswerLabel(round) {
+  if (!round) return '—'
+  if (round.skipped) return 'Passé'
+  if (round.ok) return 'Trouvé'
+  const guess = String(round.guess || '').trim()
+  return guess || '—'
 }
 
 async function fetchJson(url, fetchImpl = globalThis.fetch) {

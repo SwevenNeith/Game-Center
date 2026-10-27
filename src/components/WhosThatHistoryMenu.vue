@@ -7,11 +7,7 @@ import {
   WHOS_THAT_GAME_ID,
 } from '../services/invites.js'
 import WhosThatRecap from './WhosThatRecap.vue'
-import {
-  durationLabel,
-  parseWhosThatResults,
-  winnerLabel,
-} from '../services/whosThatPokemon.js'
+import { parseWhosThatResults } from '../services/whosThatPokemon.js'
 
 const open = ref(false)
 const loading = ref(false)
@@ -31,14 +27,6 @@ function formatDate(value) {
     hour: '2-digit',
     minute: '2-digit',
   })
-}
-
-function statsLine(side) {
-  if (!side) return '0 pt · 0 bon · 0 faux'
-  const pts = side.points === 1 ? '1 pt' : `${side.points} pts`
-  const bons = side.correct === 1 ? '1 bon' : `${side.correct} bons`
-  const faux = side.wrong === 1 ? '1 faux' : `${side.wrong} faux`
-  return `${pts} · ${bons} · ${faux}`
 }
 
 async function loadHistory() {
@@ -182,29 +170,6 @@ onUnmounted(() => {
                 </button>
               </div>
 
-              <p class="outcome">
-                {{ winnerLabel(match.results, match.host_name, match.guest_name) }}
-                <span v-if="match.results?.durationSeconds">
-                  · {{ durationLabel(match.results.durationSeconds) }}
-                </span>
-              </p>
-
-              <div class="arena-grid">
-                <article class="side">
-                  <p class="side-role">Joueur</p>
-                  <h4>{{ match.host_name }}</h4>
-                  <p class="side-stats">{{ statsLine(match.results?.host) }}</p>
-                </article>
-                <div class="vs" aria-hidden="true"><span>VS</span></div>
-                <article class="side">
-                  <p class="side-role">Adversaire</p>
-                  <h4>{{ match.guest_name }}</h4>
-                  <p v-if="match.results?.guest?.pending" class="side-stats side-stats--muted">
-                    En attente du 1 contre 1
-                  </p>
-                  <p v-else class="side-stats">{{ statsLine(match.results?.guest) }}</p>
-                </article>
-              </div>
               <WhosThatRecap
                 v-if="match.results"
                 compact

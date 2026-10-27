@@ -15,6 +15,8 @@ import {
   shiftedDeadline,
   isCorrectGuess,
   isExcludedMysteryId,
+  officialPokemonName,
+  playerAnswerLabel,
   loadMysteryPokemon,
   normalizeGuess,
   parseWhosThatResults,
@@ -137,6 +139,28 @@ describe('saisie du nom', () => {
     assert.equal(results.guest.pending, true)
     assert.equal(parseWhosThatResults(results).host.points, 4)
     assert.equal(winnerLabel(results, 'Léa', 'Adversaire'), 'Partie solo')
+  })
+
+  it('affiche le nom officiel du Pokémon, pas seulement la saisie', () => {
+    assert.equal(officialPokemonName({ id: 25, name: 'Pikachu', guess: 'pikachu', ok: true }), 'Pikachu')
+    assert.equal(officialPokemonName({ id: 25, name: 'Pikachu', guess: 'Raichu', ok: false }), 'Pikachu')
+    assert.equal(officialPokemonName({ id: 25, name: 'Pikachu', skipped: true }), 'Pikachu')
+    assert.equal(playerAnswerLabel({ name: 'Pikachu', guess: 'Pikachu', ok: true }), 'Trouvé')
+    assert.equal(playerAnswerLabel({ name: 'Pikachu', guess: 'Raichu', ok: false }), 'Raichu')
+    assert.equal(playerAnswerLabel({ name: 'Pikachu', skipped: true }), 'Passé')
+    assert.equal(playerAnswerLabel(null), '—')
+    assert.equal(
+      winnerLabel({ winner: 'guest', guest: { pending: false } }, 'Léa', 'Cam'),
+      'Cam l’emporte',
+    )
+    assert.equal(
+      winnerLabel(
+        { winner: 'guest', host: { points: 2 }, guest: { pending: false, points: 4 } },
+        'Local',
+        'Cam',
+      ),
+      'Cam l’emporte avec 4 points',
+    )
   })
 })
 

@@ -95,6 +95,8 @@ async function copyCode() {
   }
 }
 
+defineExpose({ inviteFriend: onInvite })
+
 function bindWatch(invite) {
   stopWatch?.()
   stopWatch = null

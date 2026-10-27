@@ -5,7 +5,6 @@ import InviteFriendMenu from '../components/InviteFriendMenu.vue'
 import WhosThatHistoryMenu from '../components/WhosThatHistoryMenu.vue'
 import WhosThatRecap from '../components/WhosThatRecap.vue'
 import WhosThatSilhouette from '../components/WhosThatSilhouette.vue'
-import { getLocalDeviceName } from '../services/device.js'
 import {
   fetchActiveInviteForDevice,
   fetchInviteByCode,
@@ -44,7 +43,6 @@ import {
 import {
   applyAnswer,
   buildMatchResults,
-  buildSoloResults,
   compactRound,
   createMysterySession,
   DURATION_OPTIONS,
@@ -59,6 +57,7 @@ import {
 
 const route = useRoute()
 const router = useRouter()
+const inviteMenu = ref(null)
 
 const invite = ref(null)
 const inviteError = ref('')
@@ -370,16 +369,8 @@ function startFromInvite(state, key) {
   loadRound(token)
 }
 
-async function startMatch() {
-  if (invite.value) return
-  endedNotice.value = ''
-  inviteError.value = ''
-  const token = bumpPlay()
-  resetBoard()
-  startedKey = ''
-  phase.value = 'playing'
-  startTimer(durationSeconds.value)
-  await loadRound(token)
+function openInviteMenu() {
+  inviteMenu.value?.inviteFriend()
 }
 
 async function submitGuess() {
@@ -428,7 +419,7 @@ function recapPayload(state) {
     durationSeconds: state.durationSeconds,
     samePokemon: state.samePokemon,
     host: state.host,
-    guest: state.guest,
+    guest: { ...state.guest, pending: false },
     winner: buildMatchResults({
       durationSeconds: state.durationSeconds,
       samePokemon: state.samePokemon,
@@ -492,31 +483,7 @@ async function finishMatch(token) {
     if (state.status === 'done' && !state.matchSaved) await persistDuoResults(invite.value)
     return
   }
-  if (phase.value === 'done') return
-  phase.value = 'done'
-  recap.value = {
-    hostName: getLocalDeviceName(),
-    guestName: '',
-    durationSeconds: durationSeconds.value,
-    samePokemon: true,
-    host: { ...stats.value, rounds: rounds.value },
-    guest: { points: 0, correct: 0, wrong: 0, pending: true, rounds: [] },
-    winner: 'solo',
-  }
-  saving.value = true
-  saveError.value = ''
-  const results = buildSoloResults({
-    durationSeconds: durationSeconds.value,
-    stats: stats.value,
-    rounds: rounds.value,
-  })
-  const saved = await saveWhosThatMatch({
-    hostName: getLocalDeviceName(),
-    results,
-  })
-  if (token !== playToken) return
-  saving.value = false
-  if (!saved.success) saveError.value = saved.message
+  goLobby()
 }
 
 async function chooseDuration(seconds) {
@@ -649,6 +616,7 @@ onUnmounted(() => {
       <div class="game-bar__actions">
         <WhosThatHistoryMenu />
         <InviteFriendMenu
+          ref="inviteMenu"
           :game-id="WHOS_THAT_GAME_ID"
           :invite="invite"
           :extra="inviteExtra"
@@ -692,7 +660,7 @@ onUnmounted(() => {
       <p class="card-desc">
         {{
           isHost || !invite
-            ? 'Devine autant de Pokémon que possible avant la fin du chrono.'
+            ? 'Invite un ami, puis devinez autant de Pokémon que possible avant la fin du chrono.'
             : 'L’hôte choisit le temps. Tu vois ses choix en direct.'
         }}
       </p>
@@ -729,8 +697,11 @@ onUnmounted(() => {
         }}
       </p>
 
-      <button v-if="!invite" type="button" class="primary-btn" @click="startMatch">
-        Lancer la partie
+      <button v-if="!invite" type="button" class="primary-btn" @click="openInviteMenu">
+        Inviter un ami
+      </button>
+      <button v-else-if="waitingForFriend" type="button" class="primary-btn" @click="openInviteMenu">
+        Voir le code
       </button>
       <button
         v-else-if="duoReady"
@@ -742,6 +713,7 @@ onUnmounted(() => {
       >
         {{ iAmReady ? 'Pas prêt' : 'Prêt' }}
       </button>
+      <p v-if="!invite" class="hint">Ce jeu se joue à deux. Envoie un code à un ami pour commencer.</p>
       <p v-else-if="waitingForFriend" class="hint">En attente d’un ami pour lancer le face-à-face.</p>
       <p v-else-if="invite && !friendName" class="hint">En attente du nom de ton ami.</p>
       <p v-if="duoReady && iAmReady && !friendReady" class="hint">En attente de {{ friendName }}…</p>
@@ -815,7 +787,7 @@ onUnmounted(() => {
       />
       <p v-if="saving" class="hint">Enregistrement de la partie…</p>
       <p v-else-if="saveError" class="hint hint--error">{{ saveError }}</p>
-      <button type="button" class="primary-btn" @click="invite ? patchState(restartWhosThatState) : goLobby()">
+      <button type="button" class="primary-btn" @click="patchState(restartWhosThatState)">
         Nouvelle partie
       </button>
     </template>
