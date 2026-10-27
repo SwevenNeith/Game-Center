@@ -1,19 +1,27 @@
 import { supabase } from '../supabase.js'
 import { getDeviceId, getLocalDeviceName } from './device.js'
 import { resolveStartersByIds } from './pokeapi.js'
+import { endWhosThatState, parseWhosThatState } from './whosThatGame.js'
+import { GUEST_PLACEHOLDER } from './whosThatPokemon.js'
 import {
   bothFinalsChosen,
-  endGameState,
+  endGameState as endStarterGameState,
   GAME_DURATION_MS,
-  isEnded,
-  parseGameState,
+  isEnded as isStarterEnded,
+  parseGameState as parseStarterGameState,
   TOTAL_ROUNDS,
 } from './starterAveugle.js'
+
+export function parseInviteState(invite) {
+  if (invite?.game_id === WHOS_THAT_GAME_ID) return parseWhosThatState(invite)
+  return parseStarterGameState(invite)
+}
 
 const SESSION_KEY = 'gamecenter.active-invite'
 
 export const INVITE_TTL_MS = 5 * 60 * 1000
 export const STARTER_GAME_ID = 'starter-aveugle'
+export const WHOS_THAT_GAME_ID = 'whos-that-pokemon'
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
@@ -58,7 +66,7 @@ export function isInviteExpired(invite) {
 
 export function isActiveGame(invite) {
   if (!invite || isInviteExpired(invite)) return false
-  const status = parseGameState(invite).status
+  const status = parseInviteState(invite).status
   return status !== 'ended'
 }
 
@@ -86,8 +94,20 @@ export function forgetGameSession(gameId) {
 
 export function resumeSummary(invite) {
   if (!invite) return ''
-  const state = parseGameState(invite)
+  const state = parseInviteState(invite)
   const friend = otherPlayerName(invite)
+  if (invite.game_id === WHOS_THAT_GAME_ID) {
+    if (state.status === 'lobby' || state.status === 'naming') {
+      return friend ? `Préparation contre ${friend}` : 'Préparation'
+    }
+    if (state.status === 'countdown' || state.status === 'playing') {
+      return friend ? `Partie contre ${friend}` : 'Partie en cours'
+    }
+    if (state.status === 'done') {
+      return friend ? `Résultat contre ${friend}` : 'Résultat'
+    }
+    return friend ? `En cours avec ${friend}` : 'Partie en cours'
+  }
   if (state.status === 'picking') {
     return friend ? `Manche ${state.round} contre ${friend}` : `Manche ${state.round}`
   }
@@ -111,7 +131,7 @@ export function resumeSummary(invite) {
 
 export function otherPlayerName(invite, deviceId = getDeviceId()) {
   if (!invite) return null
-  const state = parseGameState(invite)
+  const state = parseInviteState(invite)
   if (invite.host_device_id === deviceId) return state.guest.playerName || null
   if (invite.guest_device_id === deviceId) return state.host.playerName || null
   return state.guest.playerName || state.host.playerName || null
@@ -119,7 +139,7 @@ export function otherPlayerName(invite, deviceId = getDeviceId()) {
 
 export function localPlayerName(invite, deviceId = getDeviceId()) {
   if (!invite) return null
-  const state = parseGameState(invite)
+  const state = parseInviteState(invite)
   const role = localPlayerRole(invite, deviceId)
   if (role === 'host') return state.host.playerName || null
   if (role === 'guest') return state.guest.playerName || null
@@ -169,7 +189,7 @@ function finalTeamRecords(index, originalIds, finalTeam) {
 }
 
 export async function saveCompletedMatch(invite, index) {
-  const state = parseGameState(invite)
+  const state = parseStarterGameState(invite)
   const teamsReady =
     (state.host?.team || []).length >= TOTAL_ROUNDS && (state.guest?.team || []).length >= TOTAL_ROUNDS
   if (!teamsReady || state.matchSaved || state.status === 'ended') {
@@ -195,7 +215,7 @@ export async function saveCompletedMatch(invite, index) {
 }
 
 export async function saveMatchFinalTeams(invite, index) {
-  const state = parseGameState(invite)
+  const state = parseStarterGameState(invite)
   if (!invite?.id || !bothFinalsChosen(state)) return { success: true, skipped: true }
 
   const { error } = await supabase
@@ -225,8 +245,12 @@ export async function deleteAllMatches(gameId = STARTER_GAME_ID) {
 
 export async function endInvite(invite) {
   if (!invite?.id) return { success: false, message: 'Aucune partie à terminer.' }
+  const endedState =
+    invite.game_id === WHOS_THAT_GAME_ID
+      ? endWhosThatState(parseWhosThatState(invite))
+      : endStarterGameState(parseStarterGameState(invite))
   const result = await updateInvite(invite.id, {
-    game_state: endGameState(parseGameState(invite)),
+    game_state: endedState,
     host_pick: null,
     guest_pick: null,
     expires_at: new Date().toISOString(),
@@ -244,7 +268,7 @@ export async function fetchActiveInviteForDevice(gameId = STARTER_GAME_ID) {
       rememberGameSession(gameId, byId.invite)
       return { success: true, invite: byId.invite }
     }
-    if (byId.missing || (byId.success && (isEnded(parseGameState(byId.invite)) || !isActiveGame(byId.invite)))) {
+    if (byId.missing || (byId.success && !isActiveGame(byId.invite))) {
       forgetGameSession(gameId)
     }
   }
@@ -297,6 +321,25 @@ export async function saveMatchBattleResults({ matchId, inviteId } = {}, results
   const { error } = await query
   if (error) return { success: false, message: mapInviteError(error) }
   return { success: true, results: payload }
+}
+
+export async function saveWhosThatMatch({ hostName, guestName, results, inviteId } = {}) {
+  if (!results) return { success: false, message: 'Résultat manquant.' }
+  if (inviteId) {
+    await supabase.from('game_matches').update({ invite_id: null }).eq('invite_id', inviteId)
+  }
+  const { error } = await supabase.from('game_matches').insert({
+    game_id: WHOS_THAT_GAME_ID,
+    invite_id: inviteId || null,
+    host_name: String(hostName || getLocalDeviceName() || 'Joueur').trim() || 'Joueur',
+    guest_name: String(guestName || GUEST_PLACEHOLDER).trim() || GUEST_PLACEHOLDER,
+    host_team: [],
+    guest_team: [],
+    battle_results: results,
+  })
+  if (error && error.code === '23505') return { success: true, results, skipped: true }
+  if (error) return { success: false, message: mapInviteError(error) }
+  return { success: true, results }
 }
 
 export async function fetchMatchHistory(gameId = STARTER_GAME_ID) {
@@ -403,7 +446,7 @@ export async function joinInvite(rawCode, expectedGameId = null) {
       guest_device_id: deviceId,
       joined_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + GAME_DURATION_MS).toISOString(),
-      game_state: parseGameState(invite),
+      game_state: parseInviteState(invite),
     })
     .eq('id', invite.id)
     .is('guest_device_id', null)

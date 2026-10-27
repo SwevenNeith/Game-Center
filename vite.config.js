@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-const SPA_ROUTES = ['starter-aveugle']
+const SPA_ROUTES = ['starter-aveugle', 'whos-that-pokemon']
 
 function githubPagesSpaFallback() {
   return {

@@ -1,22 +1,26 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import JoinInviteForm from '../components/JoinInviteForm.vue'
-import { games } from '../services/games.js'
+import { games, getGameById } from '../services/games.js'
 import {
   fetchActiveInviteForDevice,
   purgeExpiredInvites,
   resumeSummary,
   STARTER_GAME_ID,
+  WHOS_THAT_GAME_ID,
 } from '../services/invites.js'
 
-const resumeInvite = ref(null)
-const resumeLabel = computed(() => resumeSummary(resumeInvite.value))
+const resumeInvites = ref([])
 
 onMounted(async () => {
   await purgeExpiredInvites()
-  const result = await fetchActiveInviteForDevice(STARTER_GAME_ID)
-  if (result.success) resumeInvite.value = result.invite
+  const rows = []
+  for (const gameId of [STARTER_GAME_ID, WHOS_THAT_GAME_ID]) {
+    const result = await fetchActiveInviteForDevice(gameId)
+    if (result.success && result.invite) rows.push(result.invite)
+  }
+  resumeInvites.value = rows
 })
 </script>
 
@@ -24,16 +28,23 @@ onMounted(async () => {
   <div class="dashboard">
     <JoinInviteForm />
 
-    <section v-if="resumeInvite" class="resume-card" aria-labelledby="resume-title">
+    <section
+      v-for="resumeInvite in resumeInvites"
+      :key="resumeInvite.id"
+      class="resume-card"
+      :aria-labelledby="`resume-title-${resumeInvite.id}`"
+    >
       <p class="eyebrow">Partie en cours</p>
-      <h2 id="resume-title">Reprendre Starter à l’aveugle</h2>
+      <h2 :id="`resume-title-${resumeInvite.id}`">
+        Reprendre {{ getGameById(resumeInvite.game_id)?.name || 'la partie' }}
+      </h2>
       <p class="resume-card__desc">
         Tu as quitté une partie. Tu peux y revenir sans perdre la progression.
-        <span v-if="resumeLabel"> {{ resumeLabel }}.</span>
+        <span v-if="resumeSummary(resumeInvite)"> {{ resumeSummary(resumeInvite) }}.</span>
       </p>
       <RouterLink
         class="resume-btn"
-        :to="{ path: '/starter-aveugle', query: { code: resumeInvite.code } }"
+        :to="{ path: getGameById(resumeInvite.game_id)?.to || '/', query: { code: resumeInvite.code } }"
       >
         Reprendre la partie
       </RouterLink>

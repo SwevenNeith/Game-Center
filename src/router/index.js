@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import DashboardView from '../views/DashboardView.vue'
 import StarterAveugleView from '../views/StarterAveugleView.vue'
+import WhosThatPokemonView from '../views/WhosThatPokemonView.vue'
 
 const APP_NAME = 'Game Center'
 
@@ -18,6 +19,12 @@ const router = createRouter({
       name: 'starter-aveugle',
       component: StarterAveugleView,
       meta: { title: 'Starter à l’aveugle' },
+    },
+    {
+      path: '/whos-that-pokemon',
+      name: 'whos-that-pokemon',
+      component: WhosThatPokemonView,
+      meta: { title: 'Who’s that Pokémon ?' },
     },
     {
       path: '/:pathMatch(.*)*',

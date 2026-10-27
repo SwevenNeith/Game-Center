@@ -20,6 +20,13 @@ export const games = [
     to: '/starter-aveugle',
     status: 'ready',
   },
+  {
+    id: 'whos-that-pokemon',
+    name: 'Who’s that Pokémon\u00a0?',
+    description: 'Devine le Pokémon à partir de sa silhouette.',
+    to: '/whos-that-pokemon',
+    status: 'ready',
+  },
 ]
 
 export function getGameById(id) {
